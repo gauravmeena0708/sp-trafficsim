@@ -163,7 +163,8 @@ function refreshMetrics() {
   $('metric-requested').textContent = r.requested;
   $('metric-network').textContent = r.inNetwork;
   $('metric-waiting').textContent = r.waiting;
-  $('run-state').textContent = !validateScenario(active()).length ? (simulation.done ? 'Complete' : simulation.time < active().run.warmup ? 'Warm-up' : playing ? 'Running' : 'Paused') : 'Invalid inputs';
+  // Pausing must be visible even during warm-up.
+  $('run-state').textContent = validateScenario(active()).length ? 'Invalid inputs' : simulation.done ? 'Complete' : !playing ? (simulation.time > 0 ? 'Paused' : 'Ready') : simulation.time < active().run.warmup ? 'Warm-up' : 'Running';
   $('play-button').textContent = simulation.done ? '↺ Run again' : playing ? 'Ⅱ Pause' : '▶ Run simulation';
   const clock = seconds => `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
   $('simulation-time').textContent = `${clock(simulation.time)} / ${clock(simulation.scenario.run.duration)}`;

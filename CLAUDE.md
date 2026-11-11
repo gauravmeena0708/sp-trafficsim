@@ -11,10 +11,11 @@ npm run dev        # serve source on http://127.0.0.1:5173 (module workers need 
 npm test           # node:test correctness suite
 npm run check      # syntax, relative imports, GitHub Pages-safe asset paths
 npm run build      # static site in dist/
+npm run test:browser  # browser checks against dist/ (Chrome/Edge via DevTools protocol; --source, --browser <path>)
 npm run benchmark  # headless engine timing on the declared reference workload
 ```
 
-Run `npm run check && npm test` before every commit. CI runs check, test and build on every push; `.github/workflows/pages.yml` deploys `dist/` from `main`.
+Run `npm run check && npm test` before every commit, and `npm run build && npm run test:browser` when the UI changes. CI runs check, test, build and the browser checks on every push; `.github/workflows/pages.yml` deploys `dist/` from `main`.
 
 ## Module boundaries
 

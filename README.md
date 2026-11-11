@@ -21,7 +21,17 @@ npm test
 npm run build
 npm run preview
 npm run benchmark
+npm run test:browser   # after build; needs Chrome, Edge or Chromium
 ```
+
+`test:browser` drives a headless Chromium-based browser through the DevTools protocol. It covers:
+
+- keyboard use and accessible names;
+- project save and import (including rejected files);
+- CSV export and print layout;
+- a phone-sized touch layout.
+
+Pass `--browser <path>` to choose a browser, or `--source` to test the source tree instead of `dist/`. Firefox and Safari are not covered.
 
 `build` creates a standalone static site in `dist/`. All app asset and worker paths are relative, so GitHub repository subpaths work without a custom base-path configuration.
 
