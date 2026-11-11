@@ -1,18 +1,21 @@
 // Compiles scenario templates into an explicit network graph: nodes (junctions),
 // directed links with lanes, and lane-level movement paths through each junction.
 // World coordinates are metres with x east and y south (screen orientation).
-// Traffic keeps left: lane 0 is the kerbside lane, lane (lanes − 1) the median lane.
+// Traffic keeps left: lane 0 is the kerbside lane; through lanes come next and an
+// optional right-turn pocket lane is the median-most lane.
 
 export const LANE_WIDTH = 3.5;
 export const TEMPLATES = {
   fourArm: 'Four-arm junction',
   tJunction: 'T-junction (no north arm)',
   corridor: 'Two-junction corridor',
+  roundabout: 'Single-lane roundabout',
 };
 export const ARM_VECTORS = { north: [0, -1], east: [1, 0], south: [0, 1], west: [-1, 0] };
 const ARM_LABELS = { north: 'North', east: 'East', south: 'South', west: 'West' };
 const ARM_ORDER = ['north', 'east', 'south', 'west'];
 const OPPOSITE = { north: 'south', east: 'west', south: 'north', west: 'east' };
+export const ROUNDABOUT_RADIUS = 24;
 export const armGroup = arm => (arm === 'east' || arm === 'west') ? 'eastWest' : 'northSouth';
 
 export const boxHalf = lanes => lanes * LANE_WIDTH + 3;
@@ -34,61 +37,115 @@ export function movementType(arrivalArm, departureArm) {
   return cross < 0 ? 'left' : cross > 0 ? 'right' : 'straight';
 }
 
-function makeLink(id, label, from, to, x0, y0, x1, y1, geometry, extra = {}) {
+// Effective per-approach settings: explicit overrides, else shared values.
+export function approachSettings(scenario, linkId, kind = 'entry') {
+  const o = scenario.approaches?.[linkId] ?? {};
+  const shared = scenario.geometry;
+  const roundabout = scenario.template === 'roundabout';
+  return {
+    lanes: roundabout ? 1 : o.lanes ?? shared.lanes,
+    speed: o.speed ?? shared.speed,
+    length: kind === 'entry' ? o.length ?? shared.length : null,
+    left: o.left ?? scenario.turning.left,
+    right: o.right ?? scenario.turning.right,
+    pocket: roundabout ? 0 : o.pocket ?? 0,
+  };
+}
+
+function makeLink(id, label, from, to, x0, y0, x1, y1, lanes, speedKmh, extra = {}) {
   const length = Math.hypot(x1 - x0, y1 - y0);
   return { id, label, from, to, x0, y0, x1, y1, dx: (x1 - x0) / length, dy: (y1 - y0) / length, length,
-    lanes: geometry.lanes, speed: geometry.speed / 3.6, ...extra };
+    lanes, throughLanes: lanes, pocket: null, speed: speedKmh / 3.6, ...extra };
+}
+
+function withPocket(link, pocketLength) {
+  if (!pocketLength) return link;
+  const length = Math.min(pocketLength, link.length - 10);
+  return { ...link, lanes: link.throughLanes + 1, pocket: { lane: link.throughLanes, length, start: link.length - length } };
+}
+
+// Largest total lane count on any link, so every junction box can hold its paths.
+function maxLanes(scenario) {
+  if (scenario.template === 'roundabout') return 1;
+  const values = Object.values(scenario.approaches ?? {}).map(o => (o.lanes ?? scenario.geometry.lanes) + (o.pocket ? 1 : 0));
+  return Math.max(scenario.geometry.lanes, ...values);
+}
+
+function signalPlan(scenario, nodeId) {
+  return { ...scenario.signals, ...(scenario.signals.junctions?.[nodeId] ?? {}) };
 }
 
 function templateNodes(scenario, half) {
   const template = scenario.template ?? 'fourArm';
   if (template === 'corridor') {
     return [
-      { id: 'A', label: 'Junction A', x: 0, y: 0, arms: [...ARM_ORDER], offset: 0 },
-      { id: 'B', label: 'Junction B', x: scenario.geometry.spacing + 2 * half, y: 0, arms: [...ARM_ORDER], offset: scenario.signals.offset },
+      { id: 'A', label: 'Junction A', x: 0, y: 0, arms: [...ARM_ORDER], offset: 0, control: 'signal' },
+      { id: 'B', label: 'Junction B', x: scenario.geometry.spacing + 2 * half, y: 0, arms: [...ARM_ORDER], offset: scenario.signals.offset, control: 'signal' },
     ];
   }
+  if (template === 'roundabout') {
+    return ARM_ORDER.map(arm => ({ id: `R${arm[0].toUpperCase()}`, label: `Roundabout ${arm} entry`, x: ARM_VECTORS[arm][0] * ROUNDABOUT_RADIUS,
+      y: ARM_VECTORS[arm][1] * ROUNDABOUT_RADIUS, arms: [arm], offset: 0, control: 'priority' }));
+  }
   const arms = template === 'tJunction' ? ['east', 'south', 'west'] : [...ARM_ORDER];
-  return [{ id: 'J', label: 'Junction', x: 0, y: 0, arms, offset: 0 }];
+  return [{ id: 'J', label: 'Junction', x: 0, y: 0, arms, offset: 0, control: 'signal' }];
 }
 
 export function compileNetwork(scenario) {
   const { geometry } = scenario;
-  const half = boxHalf(geometry.lanes);
-  const nodes = templateNodes(scenario, half).map(n => ({ ...n, half, inbound: {}, outbound: {} }));
+  const template = scenario.template ?? 'fourArm';
+  const half = boxHalf(maxLanes(scenario));
+  const nodes = templateNodes(scenario, half).map(n => ({ ...n, half, inbound: {}, outbound: {}, plan: signalPlan(scenario, n.id) }));
   const single = nodes.length === 1;
   const links = [];
   const neighbour = (node, arm) => nodes.find(other => other !== node && Math.sign(other.x - node.x) === ARM_VECTORS[arm][0] && Math.sign(other.y - node.y) === ARM_VECTORS[arm][1] && other.arms.includes(OPPOSITE[arm]));
   for (const node of nodes) {
     for (const arm of node.arms) {
       const [vx, vy] = ARM_VECTORS[arm];
-      const other = neighbour(node, arm);
-      const name = single ? ARM_LABELS[arm] : (arm === 'east' || arm === 'west') && !other ? ARM_LABELS[arm] : `${node.id} ${ARM_LABELS[arm].toLowerCase()}`;
-      const base = single || ((arm === 'east' || arm === 'west') && !other) ? arm : `${node.id}-${arm}`;
+      const other = template === 'roundabout' ? null : neighbour(node, arm);
+      const sideRoad = !single && template !== 'roundabout' && (arm === 'north' || arm === 'south');
+      const name = sideRoad ? `${node.id} ${arm}` : ARM_LABELS[arm];
+      const base = sideRoad ? `${node.id}-${arm}` : arm;
       if (other) {
         // One internal link per direction; create it from the upstream node only.
         const id = `${node.id}-${other.id}`;
-        links.push(makeLink(id, `${node.id} → ${other.id}`, node.id, other.id,
-          node.x + vx * half, node.y + vy * half, other.x - vx * half, other.y - vy * half, geometry,
-          { kind: 'internal', fromArm: arm, toArm: OPPOSITE[arm] }));
+        const settings = approachSettings(scenario, id, 'internal');
+        links.push(withPocket(makeLink(id, `${node.id} → ${other.id}`, node.id, other.id,
+          node.x + vx * half, node.y + vy * half, other.x - vx * half, other.y - vy * half, settings.lanes, settings.speed,
+          { kind: 'internal', fromArm: arm, toArm: OPPOSITE[arm] }), settings.pocket));
         continue;
       }
-      const far = half + geometry.length;
-      links.push(makeLink(base, `${name} approach`, null, node.id,
-        node.x + vx * far, node.y + vy * far, node.x + vx * half, node.y + vy * half, geometry,
-        { kind: 'entry', toArm: arm, demandKey: arm }));
+      const settings = approachSettings(scenario, base, 'entry');
+      const far = half + settings.length;
+      links.push(withPocket(makeLink(base, `${name} approach`, null, node.id,
+        node.x + vx * far, node.y + vy * far, node.x + vx * half, node.y + vy * half, settings.lanes, settings.speed,
+        { kind: 'entry', toArm: arm, demandKey: arm }), settings.pocket));
+      const exitLanes = template === 'roundabout' ? 1 : geometry.lanes;
       links.push(makeLink(`${base}-out`, `${name} exit`, node.id, null,
-        node.x + vx * half, node.y + vy * half, node.x + vx * far, node.y + vy * far, geometry,
+        node.x + vx * half, node.y + vy * half, node.x + vx * (half + geometry.length), node.y + vy * (half + geometry.length), exitLanes, geometry.speed,
         { kind: 'exit', fromArm: arm }));
     }
   }
+  if (template === 'roundabout') {
+    // Clockwise circulation for left-hand traffic: west → north → east → south.
+    const ordered = ['RW', 'RN', 'RE', 'RS'].map(id => nodes.find(n => n.id === id));
+    for (let i = 0; i < ordered.length; i++) {
+      const a = ordered[i], b = ordered[(i + 1) % ordered.length];
+      const length = Math.hypot(b.x - a.x, b.y - a.y);
+      const dx = (b.x - a.x) / length, dy = (b.y - a.y) / length;
+      links.push(makeLink(`${a.id}-${b.id}`, `Circulating ${a.id[1]}→${b.id[1]}`, a.id, b.id,
+        a.x + dx * half, a.y + dy * half, b.x - dx * half, b.y - dy * half, 1, Math.min(geometry.speed, 30), { kind: 'ring', fromArm: 'ring', toArm: 'ring' }));
+    }
+  }
   for (const link of links) {
-    if (link.to) nodes.find(n => n.id === link.to).inbound[link.toArm] = link.id;
-    if (link.from) nodes.find(n => n.id === link.from).outbound[link.fromArm] = link.id;
+    if (link.to) nodes.find(n => n.id === link.to).inbound[link.kind === 'ring' ? 'ring' : link.toArm] = link.id;
+    if (link.from) nodes.find(n => n.id === link.from).outbound[link.kind === 'ring' ? 'ring' : link.fromArm] = link.id;
   }
   const byId = Object.fromEntries(links.map(l => [l.id, l]));
   const nodeById = Object.fromEntries(nodes.map(n => [n.id, n]));
-  return { template: scenario.template ?? 'fourArm', nodes, links, byId, nodeById, paths: new Map(), conflicts: new Map() };
+  const centre = { x: nodes.reduce((s, n) => s + n.x, 0) / nodes.length, y: nodes.reduce((s, n) => s + n.y, 0) / nodes.length };
+  return { template, nodes, links, byId, nodeById, centre, island: template === 'roundabout' ? { ...centre, radius: ROUNDABOUT_RADIUS - half - 1 } : null,
+    paths: new Map(), conflicts: new Map(), turning: Object.fromEntries(links.filter(l => l.to).map(l => [l.id, approachSettings(scenario, l.id, l.kind)])) };
 }
 
 // Available departures from an inbound link, with the movement each represents.
@@ -96,8 +153,23 @@ export function movementsFrom(network, linkId) {
   const link = network.byId[linkId];
   if (!link.to) return [];
   const node = network.nodeById[link.to];
+  if (node.control === 'priority') {
+    const ring = { arm: 'ring', link: node.outbound.ring };
+    if (link.kind === 'entry') return [{ ...ring, movement: 'merge' }];
+    return [{ ...ring, movement: 'circulate' }, { arm: node.arms[0], link: node.outbound[node.arms[0]], movement: 'diverge' }];
+  }
   return node.arms.filter(arm => arm !== link.toArm).map(arm => ({ arm, link: node.outbound[arm], movement: movementType(link.toArm, arm) }));
 }
+
+const pickWeighted = (options, weights, draw) => {
+  let total = weights.reduce((a, b) => a + b, 0);
+  if (total <= 0) { weights = options.map(() => 1); total = options.length; }
+  let value = (draw ?? 0.5) * total;
+  for (let k = 0; k < options.length; k++) { if (value < weights[k]) return options[k]; value -= weights[k]; }
+  return options.at(-1);
+};
+
+const shareOf = (shares, movement) => movement === 'left' ? shares.left : movement === 'right' ? shares.right : Math.max(0, 100 - shares.left - shares.right);
 
 // Choose a whole route at departure from declared turning shares. Unavailable
 // movements are removed and the remaining shares renormalised; if none remain
@@ -105,16 +177,31 @@ export function movementsFrom(network, linkId) {
 export function chooseRoute(network, entryId, turning, draws) {
   const route = [entryId];
   const moves = [];
+  if (network.template === 'roundabout') {
+    // Exit chosen by the movement it represents relative to the entry arm:
+    // first exit = left, second = straight on, third = right (no U-turns).
+    const entry = network.byId[entryId];
+    const shares = network.turning[entryId] ?? turning;
+    const exits = ['north', 'east', 'south', 'west'].filter(arm => arm !== entry.toArm);
+    const target = pickWeighted(exits, exits.map(arm => shareOf(shares, movementType(entry.toArm, arm))), draws[0]);
+    let current = entryId;
+    for (let guard = 0; guard < 8; guard++) {
+      const node = network.nodeById[network.byId[current].to];
+      const exitHere = node.arms[0] === target && network.byId[current].kind === 'ring';
+      const options = movementsFrom(network, current);
+      const pick = exitHere ? options.find(o => o.movement === 'diverge') : options.find(o => o.movement !== 'diverge');
+      moves.push(pick.movement);
+      route.push(pick.link);
+      current = pick.link;
+      if (exitHere) break;
+    }
+    return { route, moves };
+  }
   let current = entryId;
   for (let i = 0; network.byId[current].to; i++) {
     const options = movementsFrom(network, current);
-    const share = { straight: Math.max(0, 100 - turning.left - turning.right), left: turning.left, right: turning.right };
-    let weights = options.map(o => share[o.movement]);
-    let total = weights.reduce((a, b) => a + b, 0);
-    if (total <= 0) { weights = options.map(() => 1); total = options.length; }
-    let draw = (draws[i] ?? 0.5) * total;
-    let pick = options.at(-1);
-    for (let k = 0; k < options.length; k++) { if (draw < weights[k]) { pick = options[k]; break; } draw -= weights[k]; }
+    const shares = network.turning[current] ?? turning;
+    const pick = pickWeighted(options, options.map(o => shareOf(shares, o.movement)), draws[i]);
     moves.push(pick.movement);
     route.push(pick.link);
     current = pick.link;
@@ -122,12 +209,19 @@ export function chooseRoute(network, entryId, turning, draws) {
   return { route, moves };
 }
 
-// Lane a vehicle uses on a link given the movement it will make at the link's end.
-// Left turns use the kerbside lane, right turns the median lane; otherwise undefined.
+// Lane at the stop line for a movement: kerbside for left, pocket (or median
+// through lane) for right; undefined when any through lane will do.
 export function laneForMovement(link, movement) {
   if (movement === 'left') return 0;
-  if (movement === 'right') return link.lanes - 1;
+  if (movement === 'right') return link.pocket ? link.pocket.lane : link.throughLanes - 1;
   return undefined;
+}
+
+// Lane used from the start of a link. Right-turners travel in the median
+// through lane until they can enter the pocket.
+export function approachLane(link, movement) {
+  if (movement === 'right' && link.pocket) return link.throughLanes - 1;
+  return laneForMovement(link, movement);
 }
 
 function quadratic(p0, c, p1, t) {
@@ -144,16 +238,16 @@ export function junctionPath(network, fromId, fromLane, toId, toLane) {
   const p0 = lanePoint(a, fromLane, a.length), p1 = lanePoint(b, toLane, 0);
   const det = a.dx * -b.dy - a.dy * -b.dx;
   let points;
-  if (Math.abs(det) < 1e-9) points = Array.from({ length: 13 }, (_, i) => [p0[0] + (p1[0] - p0[0]) * i / 12, p0[1] + (p1[1] - p0[1]) * i / 12]);
+  const t = Math.abs(det) < 1e-9 ? null : ((p1[0] - p0[0]) * -b.dy - (p1[1] - p0[1]) * -b.dx) / det;
+  if (t === null || t <= 0) points = Array.from({ length: 13 }, (_, i) => [p0[0] + (p1[0] - p0[0]) * i / 12, p0[1] + (p1[1] - p0[1]) * i / 12]);
   else {
     // Control point where the arriving and departing lane centre lines intersect.
-    const t = ((p1[0] - p0[0]) * -b.dy - (p1[1] - p0[1]) * -b.dx) / det;
     const control = [p0[0] + a.dx * t, p0[1] + a.dy * t];
     points = Array.from({ length: 13 }, (_, i) => quadratic(p0, control, p1, i / 12));
   }
   const cumulative = [0];
   for (let i = 1; i < points.length; i++) cumulative.push(cumulative[i - 1] + Math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1]));
-  const movement = movementType(a.toArm, b.fromArm);
+  const movement = movementsFrom(network, fromId).find(m => m.link === toId)?.movement ?? 'straight';
   const path = { key, from: fromId, fromLane, to: toId, toLane, node: a.to, movement, points, cumulative, length: cumulative.at(-1) };
   network.paths.set(key, path);
   return path;
@@ -186,3 +280,6 @@ export function pathsConflict(network, p, q) {
 
 // Approach links a planner can inspect: everything that ends at a junction.
 export const inboundLinks = network => network.links.filter(l => l.to);
+
+// Links a planner may configure individually (boundary and internal approaches).
+export const configurableApproaches = network => network.links.filter(l => l.kind === 'entry' || l.kind === 'internal');

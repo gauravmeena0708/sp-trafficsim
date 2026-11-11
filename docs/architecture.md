@@ -25,7 +25,8 @@ SUMO's [sublane documentation](https://sumo.dlr.de/docs/Simulation/SublaneModel.
 ## Boundaries
 
 - `model/project.js`: versioned scenarios, validation, schema migration, import. No DOM.
-- `model/network.js`: compiles templates to the network graph; movement classification, route choice from declared shares, junction path geometry and conflict detection. No DOM.
+- `model/network.js`: compiles templates and per-approach settings to the network graph; movement classification, route choice from declared shares, pockets, priority (roundabout) nodes, junction path geometry and conflict detection. No DOM.
+- `model/checks.js`: pre-run model checks, separating blocking errors from assumptions to review. No DOM.
 - `simulation`: consumes a scenario, steps time, and produces snapshots and results. No DOM.
 - `diagnostics`: interprets recorded state without claiming exact causal proof.
 - `ui`: renders any compiled network and exports results without changing physics.
@@ -36,7 +37,7 @@ Keep physics in `simulation` and graph construction in `model/network.js`. Maint
 
 ## Persistence and security
 
-Schema version 2 supports up to 30 scenarios and project imports up to 5 MB. Schema 1 projects and browser storage are migrated on load. Imports validate all required numerical ranges, template names and unique IDs. Imported reports are discarded rather than accepted with a fabricated validated status. Model status is always illustrative in this release.
+Schema version 3 supports up to 30 scenarios and project imports up to 5 MB. Schema 1 and 2 projects and browser storage are migrated on load. Imports validate all required numerical ranges, template names, per-approach and per-junction settings, pocket lengths and unique IDs. Imported reports are discarded rather than accepted with a fabricated validated status. Model status is always illustrative in this release.
 
 Project names are escaped before HTML insertion. CSV cells guard against spreadsheet formula prefixes. The development server binds only to loopback and checks resolved paths. Generated output is ignored by Git. No analytics, remote fonts, external scripts, secrets, or storage services are used.
 

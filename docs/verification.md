@@ -1,5 +1,56 @@
 # Verification record
 
+## v0.3 network editing — 11 November 2026
+
+### Automated checks
+
+- `npm run check`: passed.
+- `npm test`: 26 tests passed, 0 failed (9 new, in `test/network-editor.test.js`).
+
+The new tests cover:
+
+- **Roundabout routes:** circulation is clockwise; first/second/third exit maps to left/straight/right; all links are single-lane priority links.
+- **Roundabout under heavy load** (900 veh/h per arm, 1,200 s): conservation, spacing and conflict-free occupancy hold at every step (only converging paths share a junction, one behind the other). More than 100 trips still complete in the second half, so it doesn't lock up, and overload is retained as waiting demand.
+- **Give-way rule:** an entering vehicle at the give-way line may enter with an empty ring, and must yield when a circulating vehicle is 8 m away at 6 m/s.
+- **Pocket overflow:** a 15 m right-turn pocket overflows under 50% right-turners. A 150 m pocket overflows less. Invariants hold at every step, and the pocket geometry compiles as specified.
+- **Per-approach overrides** change only their approach: lanes, length, speed (vehicle desired speeds) and turning shares (all west traffic turns left).
+- **Corridor per-junction greens:** junction B's own 90 s green differs from A's at t = 60 s, and invariants hold through a run.
+- **Validation** of unknown settings, over-long pockets, turning shares over 100%, and out-of-range junction greens.
+- **Model checks:** ignored T-junction north demand, shared-lane right turns (cleared by a pocket), unused settings, ignored roundabout lane counts, indicative over-capacity, and blocking errors.
+- **Schema 2 → 3 migration.**
+
+### Browser checks
+
+Headless Chrome was driven through the DevTools protocol against `npm run dev`, with no page or console errors. The drive:
+
+1. Set a west-approach right-turn share and pocket. The run reported **Right-turn pocket full** in the inspector.
+2. Switched to the corridor and gave junction B its own green. The cycle label showed `75 / 105s` and the phases diverged during the run.
+3. Switched to the roundabout. Priority control was shown, the model checks listed the ignored settings, the inspector listed the circulating links, and the timing sweep was refused with an explanation.
+4. Entered an invalid lane count. The validation message appeared and **Run** was disabled.
+
+Screenshots were reviewed. Lane widths and the roundabout are drawn at an exaggerated lateral scale for legibility.
+
+**Still not browser-checked:**
+
+- file download, print and import dialogs;
+- touch and keyboard-only use;
+- screen readers;
+- browsers other than Chrome.
+
+### Engine benchmark
+
+Same machine and settings as v0.2 (600 simulated seconds, five seeds):
+
+| Workload | Median run time |
+| --- | --- |
+| Four-arm straight-through | 85.8 ms |
+| Corridor with turns | 209.2 ms |
+| Roundabout, 25% left / 25% right | 142.8 ms |
+
+### Deployment
+
+Unchanged: the Pages source must be switched to **GitHub Actions** before the deploy workflow can succeed.
+
 ## v0.2 network foundation — 11 November 2026
 
 ### Automated checks

@@ -398,6 +398,7 @@ main{
 .map-wrap{
   flex:1;
   min-height:400px;
+  max-height:max(500px,78vh);
   position:relative;
   overflow:hidden;
   background:#f0f3e9
@@ -1110,4 +1111,46 @@ dialog p{
 }
 .sweep-findings ul{
   margin:0 0 8px 18px
+}
+.model-checks{
+  font-size:10.5px;
+  line-height:1.55;
+  background:#f6f8f1;
+  border:1px solid var(--border);
+  border-radius:5px;
+  padding:10px 12px;
+  margin-top:10px
+}
+.model-checks h4{
+  font-size:11px;
+  margin-bottom:6px
+}
+.model-checks ul{
+  list-style:none;
+  margin:0;
+  padding:0;
+  display:grid;
+  gap:7px
+}
+.model-checks li{
+  display:grid;
+  gap:2px;
+  padding-left:9px;
+  border-left:2px solid #c9d5bb;
+  color:#6f7d69
+}
+.model-checks li.check-warning{
+  border-left-color:#d2a052;
+  color:#7d5a2c
+}
+.model-checks strong{
+  font-weight:600
+}
+.checkbox-line{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  font-size:11px;
+  color:#6f7d69;
+  margin:12px 0 6px
 }

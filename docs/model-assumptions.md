@@ -1,8 +1,8 @@
-# Model v0.2: assumptions and interpretation
+# Model v0.3: assumptions and interpretation
 
 **Status: illustrative. No field calibration or independent validation has been performed.**
 
-Engine identifier: `illustrative-network/0.2.0`. Project schema version 2 (schema 1 projects are migrated on import as straight-through four-arm junctions).
+Engine identifier: `illustrative-network/0.3.0`. Project schema version 3. Older projects are migrated on import: schema 1 becomes a straight-through four-arm junction, and schema 2 gains empty per-approach and per-junction settings.
 
 ## Network
 
@@ -13,15 +13,28 @@ Scenarios choose a template that compiles to an explicit graph (`src/model/netwo
 | Four-arm junction | 1 | north, east, south, west |
 | T-junction | 1 | east, south, west (no north arm) |
 | Two-junction corridor | 2 (A west of B) | each has north and south side roads; A–B and B–A links of configurable length |
+| Single-lane roundabout | 4 priority junctions on a clockwise ring (24 m radius) | north, east, south, west |
 
-All roads share length, lane count and speed limit. The corridor link length is set separately and has finite storage. Traffic keeps left. Lane 0 is the kerbside lane and the highest lane index is the median lane. The map is a schematic, not a surveyed layout. Lane widths and junction boxes are drawn wider than the longitudinal scale for legibility; the scale bar shows distance along roads.
+Roads take shared length, lane count and speed limit unless an approach has its own settings (below). The corridor link length is set separately and has finite storage. Traffic keeps left. Lane 0 is the kerbside lane and the highest lane index is the median lane. The map is a schematic, not a surveyed layout. Lane widths and junction boxes are drawn wider than the longitudinal scale for legibility; the scale bar shows distance along roads.
 
-Free-form network drawing, independent per-road properties, roundabouts, pockets, median openings and U-turns are not yet available.
+### Per-approach settings
+
+Any approach (boundary or corridor link) can override lanes (1–3), speed limit, length (boundary approaches only), left and right turning shares, and a right-turn pocket length. A blank setting uses the shared value. Exit roads always use the shared lane count and speed. Junction boxes are sized for the widest approach.
+
+### Right-turn pockets
+
+A pocket adds a median-side lane over the final *P* metres of an approach, at signalised junctions only. Right-turners travel in the median through lane until the pocket entrance, then move into the pocket if its last vehicle has left room. If the pocket is full, the right-turner stops at the entrance and holds every vehicle behind it in that lane: overflow blocks through traffic. Pocket-overflow seconds count post-warm-up time when this happens. A pocket must be at least 10 m shorter than its approach.
+
+### Roundabout
+
+The roundabout is single-lane throughout: approach, circulating and exit lane counts and pockets are ignored, and the model checks say so. Circulation is clockwise for left-hand traffic, with four short straight circulating links (about 21 m) between entry/exit nodes. Each entry gives way to circulating traffic (see junction entry). Left, straight and right turning shares select the first, second and third exit. Circulating speed is capped at 30 km/h. Under the default fleet, throughput levelled off at about 1,500 vehicles/hour in total in a demand sweep (2,400–6,000 veh/h offered, 25% left and 25% right). That plateau is a property of these simplified rules, not a capacity estimate. Compare the roundabout with a one-lane signalised junction for a like-for-like test.
+
+Free-form network drawing, median openings and U-turns are not yet available.
 
 ## Routes and lanes
 
 - Each vehicle's whole route is drawn at departure from declared turning shares (left %, right %, remainder straight), applied at every junction it reaches. Movements a junction does not offer are removed and the remaining shares rescaled; if none of the remaining shares is positive, the available movements are equally likely. U-turns are not offered.
-- Left turns use the kerbside lane and right turns the median lane. Straight-ahead vehicles enter the boundary lane with most room, and keep their lane index through a junction.
+- Left turns use the kerbside lane and right turns the median through lane, then the pocket where one exists. Straight-ahead vehicles enter the through lane with most room and keep their lane index through a junction. Pockets are never used by straight or left-turning traffic.
 - There are no mid-link lane changes. A vehicle that needs a different lane for its next junction takes it while crossing the upstream junction. A turning vehicle at the head of a shared lane therefore blocks straight traffic behind it.
 
 ## Longitudinal motion
@@ -37,12 +50,13 @@ A head vehicle at the stop line enters the junction only when all of these hold:
 3. **No conflicting path in use:** no vehicle currently in the junction is on a path whose sampled centre line passes within 2.6 m of this vehicle's path. Vehicles on the identical path may follow each other.
 4. **Room to clear the junction:** the receiving lane has room for this vehicle after all vehicles already committed to it. This prevents blocking the box, and lets queues spill back from a full link into the upstream junction.
 5. **Permissive right turns:** a right-turning vehicle yields while any straight or left-turning vehicle on another green approach has a conflicting path and would reach the stop line within 4 seconds (searched up to 60 m). An opposing vehicle that is itself held by a full receiving lane does not hold the turn.
+6. **Roundabout give-way:** there is no signal. An entering vehicle waits while any circulating vehicle would reach the entry within 3.5 seconds, wherever it will exit; entering drivers are not assumed to know. It also needs 3 m of spare room on the circulating lane beyond its own length. Without this buffer the ring could fill and lock up under heavy demand. A vehicle may start behind one already in the junction on a converging path if, at its speed cap, it reaches the shared lane at least one vehicle length plus gap later, with a 25% margin.
 
-Vehicles cross at a constant speed capped by movement (8 m/s straight, 6 m/s right, 5 m/s left), following any leader on the same path. These entry rules are conservative and are not a calibrated saturation-flow or gap-acceptance model.
+Vehicles cross at a constant speed capped by movement (8 m/s straight, 6 m/s right, 5 m/s left and merging, 6 m/s circulating or leaving a roundabout), following any leader on the same path. A vehicle's desired speed is the current link's speed limit × its class factor × an individual factor drawn at departure. These entry rules are conservative and are not a calibrated saturation-flow or gap-acceptance model.
 
 ## Signals
 
-Two fixed-time groups alternate: east–west, then north–south. On the T-junction the north–south group serves the south arm only. Greens accept 5–300 seconds; each group has separate yellow and all-red intervals. Both corridor junctions share one plan, and junction B's plan starts `offset` seconds later. Pedestrian clearance is not calculated because pedestrians are not modelled. Adaptive control is not implemented.
+Two fixed-time groups alternate: east–west, then north–south. On the T-junction the north–south group serves the south arm only. Greens accept 5–300 seconds; each group has separate yellow and all-red intervals. On the corridor, each junction uses the shared greens unless it has its own east–west and/or north–south greens; yellow and all-red stay shared. Junction B's plan starts `offset` seconds later. Timing sweeps change the shared green, so they do not move a junction that has its own value for that group. Pedestrian clearance is not calculated because pedestrians are not modelled. Adaptive control is not implemented.
 
 ## Arrivals and comparison
 
