@@ -1,6 +1,6 @@
 # Delivery roadmap
 
-The [product plan](../traffic_simulator_specification_prompt.md) defines the target. This checklist distinguishes what exists from what remains.
+The [product plan](product-spec.md) defines the target. This checklist distinguishes what exists from what remains.
 
 ## Implemented first slice
 
@@ -17,6 +17,18 @@ The [product plan](../traffic_simulator_specification_prompt.md) defines the tar
 
 ## Complete Phase 1
 
+### Next increment: navigable 3D
+
+- [ ] Shared simulation state for 2D and 3D views, with no change to numerical results.
+- [ ] Zoom, orbit, tilt, pan, fit/reset presets, and accessible mouse/touch/keyboard controls.
+- [ ] Simple road, signal, and vehicle geometry; selectable objects and legible overlays.
+- [ ] Camera bookmarks, optional vehicle following, and a 2D fallback.
+- [ ] Renderer/dependency evaluation, GitHub Pages asset checks, and browser performance verification.
+
+See Sections 14–16 of the product plan for the full extension requirements and acceptance criteria.
+
+### Remaining planning capabilities
+
 - [ ] Editable connected-network graph with independent per-road properties.
 - [ ] Explicit turn trajectories, lane connections, pockets, median cuts and U-turns.
 - [ ] T-junction, four-arm and single-lane roundabout templates with actual priority rules.
@@ -27,6 +39,9 @@ The [product plan](../traffic_simulator_specification_prompt.md) defines the tar
 - [ ] Persistent queue events and stronger evidence links for contributing causes.
 - [ ] Low/central/high batch matrix, route/mode indicators, paired-difference confidence intervals and precision-based additional replications.
 - [ ] Undo/redo and guided planning templates.
+- [ ] Baseline locking, autosave recovery, and actionable pre-run model checks.
+- [ ] Deterministic event replay with checkpoints and timeline navigation.
+- [ ] Synchronised comparison views, change summaries, time-series charts, and annotated exports.
 - [ ] Reference hardware/workload benchmark and expanded browser/accessibility checks.
 
 ## Phase 2

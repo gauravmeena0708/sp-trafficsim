@@ -1,8 +1,8 @@
 ﻿# Product Plan: Traffic Planning and Scenario Comparison Tool
 
-> **Instructions for the implementation agent:** Build in the phased order below, beginning with a usable small-network planning prototype. Separate the interface, network, demand, simulation, diagnostics, and reporting modules. Make assumptions visible and results reproducible. Do not claim predictive accuracy or production readiness without the validation described here.
+> Agent and contributor working rules live in [CLAUDE.md](../CLAUDE.md). This document describes the intended product; build it in the phased order below.
 
-Implementation progress is tracked in [the delivery roadmap](docs/roadmap.md). The [README](README.md) describes the current runnable slice and GitHub Pages setup; this specification describes the full intended product.
+Implementation progress is tracked in [the delivery roadmap](roadmap.md). The [README](../README.md) describes the current runnable slice and GitHub Pages setup; this specification describes the full intended product.
 
 ## 1. Purpose and users
 
@@ -239,3 +239,104 @@ Also check connectivity, demand conservation, signal conflicts, collision/overla
 - [SUMO sublane model documentation](https://sumo.dlr.de/docs/Simulation/SublaneModel.html): lateral resolution and mixed lateral behaviour for engine evaluation.
 
 These references guide implementation; citing them does not establish that this application is calibrated or validated.
+
+## 14. Extended experience: 2D editing and navigable 3D
+
+Add a 3D view of the same simulation, while retaining the overhead 2D editor. Both views must read the same network, vehicle positions, signal states, selections, and timestamps. Changing a camera or switching views must not restart the run, change physics, or change its results.
+
+### Camera and navigation
+
+- Zoom from the entire study area to an individual junction or vehicle.
+- Orbit, tilt, and pan using mouse, trackpad, touch, and keyboard controls with visible guidance.
+- Provide overhead, angled overview, street-level, fit-to-study, and reset-view presets.
+- Allow selection of a road or vehicle to focus the camera; optionally follow a vehicle and return to the previous view when following ends.
+- Bound zoom and camera movement to prevent getting lost beneath the ground or inside geometry. A failed or unavailable tracked target must leave a usable camera view.
+- Include a north indicator, scale/context indicator, and an overview map for larger networks.
+- Save named camera bookmarks with a project, separately from simulation inputs. Camera-only changes must not mark simulation results stale.
+
+### Rendering and inspection
+
+- Begin with simple roads, lane markings, signals, crossings, and recognisable vehicle shapes. Show dimensions consistently in world units.
+- Keep simulation coordinates independent of renderer coordinates; define the origin, axes, units, and conversion explicitly.
+- Make roads, junctions, queues, and vehicles selectable in either view, opening the same inspector.
+- Provide selectable overlays for speed, queue extent, demand, movement permissions, and congestion events. Use legends and text as well as colour.
+- Keep annotations readable at different zoom levels; allow hiding buildings and other scenery that obstruct a queue or junction.
+- Treat buildings, trees, and other context as optional visual layers unless a separately implemented model gives them a behavioural effect.
+- Add road elevation and grade-separated structures only alongside corresponding network connectivity and movement rules; visually crossing roads must not automatically connect.
+
+### Performance and hosting
+
+Evaluate a maintained browser 3D renderer for static GitHub Pages deployment. Record its license, dependency version, bundle size, and supported browsers before adoption. Bundle required assets with the app and use repository-relative paths.
+
+Use shared geometry, efficient repeated-vehicle drawing, and adjustable detail. Keep simulation time independent of rendering frequency. Provide a usable 2D fallback when 3D is unsupported or the graphics context is lost. Document a browser/device benchmark and frame-time target for a declared workload rather than promising a universal frame rate.
+
+## 15. Additional improvements for practical planning
+
+### A. Guided study setup and model checks
+
+Offer a short wizard: select a planning question, choose a layout, enter demand, review assumptions, and create a baseline. Include examples for a busy junction, school arrival peak, market access, bus-stop obstruction, and roundabout comparison as their required model capabilities become available.
+
+Provide a pre-run checklist that identifies disconnected routes, missing demand, impossible turns, invalid phases, and unsupported features. Each finding must explain the problem, locate it in the editor, and offer a concrete correction. Separate blocking errors from assumptions the planner can review.
+
+### B. More capable road editing
+
+- Draw roads by placing connected points; support snapping, alignment guides, measured distances, and editable curves.
+- Edit each approach independently, including lane widths, direction, speed, turning storage, and connections.
+- Offer road cross-section previews and explicit movement arrows so a planner can review the intended design before running it.
+- Add undo/redo, duplicate selection, autosave recovery, and an explicit baseline lock to prevent accidental changes to the reference design.
+- Validate geometry edits before simulation. Decorative changes must not imply additional capacity or movement permissions.
+
+### C. Replay and event investigation
+
+Provide a timeline with pause, step, speed control, and replay of completed runs. Mark events such as queue formation, spillback reaching a junction, and prolonged approach waiting. Selecting an event should move to its recorded time and location and show the supporting measurements.
+
+Implement seeking through recorded states or deterministic checkpoints and replay. Do not reverse physics by applying negative time steps. Record enough state to reproduce random streams and controller decisions, and expose storage limits for long runs.
+
+### D. Stronger comparisons and reports
+
+- Show baseline and alternative side by side, with optional synchronised cameras and simulation clocks. Identify when geometries differ enough that camera matching is approximate.
+- Present absolute results and changes from baseline, including queues on every approach, completed/unfinished trips, person delay, and pedestrian/bus impacts when modelled.
+- Include a scenario change list and notes explaining the planning hypothesis.
+- Add charts over time so an average cannot hide a severe short peak or a queue that has not cleared by the run horizon.
+- Export annotated views and charts with scenario name, timestamp, seed/model metadata, and illustrative/calibration status.
+- Provide a portable study package containing inputs, scenario changes, run manifests, and reports. Clearly label images as simulated views.
+
+### E. Demand variation and stress testing
+
+Add scheduled demand profiles, directional surges, school/event peaks, temporary lane closures, and staged roadworks. Let planners vary the start time and duration of a disturbance while retaining a matching baseline.
+
+Batch-test uncertain demand and vehicle shares within declared ranges. Distinguish those input variations from random-seed variability. Report where a design begins to leave persistent queues or unserved demand, using an explicit threshold rather than claiming a universal capacity limit.
+
+### F. Accessibility and transit outcomes
+
+As pedestrian, cycling, and bus behaviour is implemented, include crossing wait, crossing completion, bus journey reliability, and passenger-weighted delay. Make their assumptions and coverage visible. A design should not be judged only by car throughput.
+
+Represent bus bays, stop dwell, pedestrian phases, and cycling conflicts through actual behaviour before presenting comparative results for those interventions.
+
+### G. Explainable alternative search
+
+After validated comparison and reproducibility are established, allow a planner to specify objectives, constraints, and a bounded set of editable parameters. Examples include signal green ranges, maximum approach waiting, turning-pocket lengths, or available road width.
+
+Generate several candidate alternatives with visible settings and trade-offs. Preserve the baseline and candidate run records. Test shortlisted candidates against additional seeds and demand conditions, including conditions not used to select them. Describe them as tested candidates, not a guaranteed optimal design. An initial implementation can use transparent parameter sweeps; an AI component is not required.
+
+## 16. Priority and acceptance for the extensions
+
+This sequence refines the delivery phases in Section 11; it does not mark existing planned functionality complete.
+
+| Priority | Deliverable | Completion evidence |
+| --- | --- | --- |
+| Next increment | 3D junction with zoom, orbit, pan, camera presets, selection, and 2D toggle | The same run remains continuous across views; camera actions leave numerical outputs unchanged; desktop/touch controls and fallback are checked in browsers. |
+| Following increment | Independent road properties, connected-network editing, turns, and a basic roundabout | Geometry and connectivity checks pass; routes follow actual movements; downstream storage and priority behaviour are exercised. |
+| Complete Phase 1 | Guided setup, undo/redo, time-varying demand, bus/crossing behaviour, replay, richer comparisons | End-to-end study fixtures can be saved, replayed, compared, and exported with correct accounting and limitations. |
+| Phase 2 | Population demand pipeline, observed-data import, calibration and independent validation | Traceable inputs, declared fit targets, and reserved-data validation results support each stated accuracy claim. |
+| Phase 3 | Responsive signals, larger mapped studies, and constrained alternative search | Controller bounds and explanations are tested; candidate choices survive declared robustness checks. |
+
+Additional acceptance checks:
+
+1. Switch between 2D and 3D during a seeded run and verify identical vehicle counts, signal states, and final metrics to a run with no view changes.
+2. Confirm selections refer to the same object in both views and remain usable after edits or vehicle departure.
+3. Test zoom/orbit/pan, fit-to-study, keyboard navigation, touch gestures, resized windows, and unsupported/lost graphics contexts.
+4. Replay a recorded event from a checkpoint and verify the state and metrics match the original run within declared tolerances.
+5. Save/load camera bookmarks, project edits, and baseline locks without changing the physics-input fingerprint.
+6. Test the built site under a repository subpath, including 3D assets, workers, project download/import, and print/export controls.
+7. Measure browser rendering and simulation throughput separately on a declared workload. Reduced visual detail must not reduce simulated demand or alter the engine time step.

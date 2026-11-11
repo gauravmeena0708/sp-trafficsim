@@ -1,6 +1,6 @@
 # Junction — Traffic planning workbench
 
-A browser-based workbench for exploring road-planning ideas before implementation. This repository starts the first phase of the [product plan](traffic_simulator_specification_prompt.md), with a working four-arm junction and reproducible signal-timing experiments.
+A browser-based workbench for exploring road-planning ideas before implementation. This repository starts the first phase of the [product plan](docs/product-spec.md), with a working four-arm junction and reproducible signal-timing experiments.
 
 **Current status: illustrative prototype, not field-calibrated or validated.** Do not interpret its results as engineering predictions.
 
