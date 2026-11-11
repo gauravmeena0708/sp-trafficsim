@@ -2,8 +2,10 @@ export function cycleLength(signals) {
   return signals.eastWest + signals.northSouth + 2 * (signals.yellow + signals.allRed);
 }
 
-export function signalState(signals, time) {
-  let t = ((time + signals.offset) % cycleLength(signals) + cycleLength(signals)) % cycleLength(signals);
+// Fixed-time two-group plan. `offset` shifts the plan start for coordination.
+export function signalState(signals, time, offset = signals.offset ?? 0) {
+  const cycle = cycleLength(signals);
+  let t = ((time + offset) % cycle + cycle) % cycle;
   const phases = [
     ['eastWest', 'green', signals.eastWest],
     ['eastWest', 'yellow', signals.yellow],
@@ -19,8 +21,14 @@ export function signalState(signals, time) {
   return { group: 'all', colour: 'red', remaining: 0 };
 }
 
-export function isGreen(signals, time, direction) {
-  const phase = signalState(signals, time);
-  const group = ['east', 'west'].includes(direction) ? 'eastWest' : 'northSouth';
-  return phase.group === group && phase.colour === 'green';
+export function groupColour(signals, time, group, offset) {
+  const phase = signalState(signals, time, offset);
+  return phase.group === group ? phase.colour : 'red';
+}
+
+// Only green admits new entries to the junction; yellow is treated as closed.
+export const groupGreen = (signals, time, group, offset) => groupColour(signals, time, group, offset) === 'green';
+
+export function isGreen(signals, time, direction, offset) {
+  return groupGreen(signals, time, ['east', 'west'].includes(direction) ? 'eastWest' : 'northSouth', offset);
 }

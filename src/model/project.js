@@ -1,6 +1,8 @@
 export const DIRECTIONS = ['north', 'east', 'south', 'west'];
-export const ENGINE_VERSION = 'illustrative-lanes/0.1.0';
-export const SCHEMA_VERSION = 1;
+import { TEMPLATES } from './network.js';
+
+export const ENGINE_VERSION = 'illustrative-network/0.2.0';
+export const SCHEMA_VERSION = 2;
 export const FLEET = {
   twoWheeler: { label: 'Two-wheelers', length: 2, speedFactor: 1, acceleration: 2.2, occupancy: 1.2, colour: '#d48b37' },
   auto: { label: 'Auto-rickshaws', length: 3, speedFactor: 0.85, acceleration: 1.6, occupancy: 2, colour: '#9c78cc' },
@@ -13,7 +15,9 @@ export function createScenario(name = 'Existing junction') {
   return {
     id: globalThis.crypto?.randomUUID?.() ?? `scenario-${Date.now()}`,
     name,
-    geometry: { length: 250, lanes: 2, speed: 40 },
+    template: 'fourArm',
+    geometry: { length: 250, lanes: 2, speed: 40, spacing: 200 },
+    turning: { left: 0, right: 0 },
     demand: { north: 450, east: 800, south: 450, west: 800, multiplier: 1 },
     signals: { eastWest: 40, northSouth: 25, yellow: 3, allRed: 2, offset: 0 },
     fleet: { twoWheeler: 30, auto: 10, car: 50, bus: 5, truck: 5 },
@@ -37,6 +41,11 @@ export function validateScenario(s) {
   range(s.geometry?.length, 100, 600, 'Approach length');
   range(s.geometry?.lanes, 1, 3, 'Lanes per approach', true);
   range(s.geometry?.speed, 20, 80, 'Speed limit');
+  range(s.geometry?.spacing, 60, 600, 'Junction spacing');
+  if (!Object.hasOwn(TEMPLATES, s.template)) errors.push('Choose a supported layout template.');
+  range(s.turning?.left, 0, 100, 'Left-turn share');
+  range(s.turning?.right, 0, 100, 'Right-turn share');
+  if ((s.turning?.left ?? 0) + (s.turning?.right ?? 0) > 100) errors.push('Left- and right-turn shares cannot exceed 100% together.');
   for (const d of DIRECTIONS) range(s.demand?.[d], 0, 3600, `${d} demand`);
   range(s.demand?.multiplier, 0.25, 3, 'Demand multiplier');
   range(s.signals?.eastWest, 5, 300, 'East–west green');
@@ -56,10 +65,17 @@ export function createProject() {
   return { schemaVersion: SCHEMA_VERSION, title: 'Junction study', scenarios: [createScenario()], results: [] };
 }
 
+// Schema 1 described a single straight-through four-arm junction.
+export function migrateScenario(s, fromVersion) {
+  if (fromVersion >= 2 || !s || typeof s !== 'object') return s;
+  return { ...s, template: 'fourArm', geometry: { ...s.geometry, spacing: 200 }, turning: { left: 0, right: 0 } };
+}
+
 export function parseProject(text) {
   if (text.length > 5_000_000) throw new Error('Project is larger than the 5 MB import limit.');
   const project = JSON.parse(text);
-  if (project?.schemaVersion !== SCHEMA_VERSION) throw new Error('Unsupported project version.');
+  if (![1, SCHEMA_VERSION].includes(project?.schemaVersion)) throw new Error('Unsupported project version.');
+  if (Array.isArray(project.scenarios)) project.scenarios = project.scenarios.map(s => migrateScenario(s, project.schemaVersion));
   if (!Array.isArray(project.scenarios) || project.scenarios.length < 1 || project.scenarios.length > 30) throw new Error('A project must contain 1–30 scenarios.');
   const ids = new Set();
   for (const s of project.scenarios) {

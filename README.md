@@ -1,6 +1,6 @@
 # Junction — Traffic planning workbench
 
-A browser-based workbench for exploring road-planning ideas before implementation. This repository starts the first phase of the [product plan](docs/product-spec.md), with a working four-arm junction and reproducible signal-timing experiments.
+A browser-based workbench for exploring road-planning ideas before implementation. This repository starts the first phase of the [product plan](docs/product-spec.md), with four-arm, T-junction and two-junction corridor templates on an explicit network model, turning traffic, spillback between junctions, and reproducible signal-timing experiments.
 
 **Current status: illustrative prototype, not field-calibrated or validated.** Do not interpret its results as engineering predictions.
 
@@ -27,11 +27,11 @@ npm run benchmark
 
 ## Try a study
 
-1. Configure shared approach lengths, lane counts, speed limits, directional demand, and vehicle shares.
+1. Choose a layout template, then configure road lengths, lane counts, speed limits, directional demand, turning shares and vehicle mix. For the corridor, set the length of the link between junctions and junction B's signal offset.
 2. Set independent east–west and north–south green durations from **5 to 300 seconds**. Yellow and all-red intervals are separate.
-3. Run, pause, change playback speed, and inspect each approach's queues and boundary waiting.
+3. Run, pause, change playback speed, and inspect each approach — including links between junctions — for signal holds, blocked receiving lanes and spillback.
 4. Duplicate the baseline and modify an alternative.
-5. Open **Compare options** and run paired-seed replications, or sweep east–west green durations.
+5. Open **Compare options** and run paired-seed replications (with 95% intervals on the change from the baseline), or sweep either signal group's green under low, central and high demand.
 6. Compare delay with completed trips and waiting demand. Export per-seed CSV, print a report, or download the complete project JSON.
 
 Valid scenario inputs are automatically saved in this browser. Download project files for portable backups. Imported result claims are discarded; rerun experiments to produce trusted local outputs. No project data is sent to a server. Static hosting will still receive normal page/asset requests.
@@ -42,7 +42,7 @@ The repository is initialized on `main`; no remote repository is assumed or crea
 
 1. Create an empty GitHub repository and add its URL as the `origin` remote.
 2. Commit and push this project to `main`.
-3. In **Settings → Pages → Build and deployment**, select **GitHub Actions** as the source.
+3. In **Settings → Pages → Build and deployment**, select **GitHub Actions** as the source. (If it is left on *Deploy from a branch*, the deploy workflow fails at `configure-pages`.)
 4. The **Deploy GitHub Pages** workflow checks, tests, and builds the app before deploying `dist/`. If the first push preceded the Pages setting, rerun that workflow or dispatch it manually.
 
 ```sh
@@ -62,20 +62,22 @@ See [GitHub's Pages workflow documentation](https://docs.github.com/en/pages/get
 index.html                 Accessible workbench shell
 styles.css                 Responsive interface and print styles
 src/
-  model/project.js         Versioned scenarios, validation, import
+  model/project.js         Versioned scenarios, validation, migration, import
+  model/network.js         Template → network graph, routes, junction paths, conflicts
   simulation/
-    engine.js              Deterministic fixed-step lane simulation
-    signals.js             Two-phase signal state machine
+    engine.js              Deterministic fixed-step network simulation
+    signals.js             Two-group fixed-time signals with offsets
     random.js              Seeded random generator
     experiments.js         Replications, sweep candidates, statistics
     worker.js              Background comparisons and sweeps
   diagnostics/explain.js   Evidence-limited queue explanations
-  ui/canvas.js             Schematic junction rendering
+  ui/canvas.js             Schematic rendering of any compiled network
   ui/reports.js            Comparison display, CSV, print metadata
   main.js                  UI state and feature integration
 scripts/                   Dependency-free development/build/check tools
 test/                      Simulation and persistence correctness checks
-docs/                      Architecture, model assumptions, roadmap
+docs/                      Product spec, architecture, model assumptions, roadmap, verification
+CLAUDE.md                  Working rules for contributors and coding agents
 .github/workflows/         CI and GitHub Pages deployment
 ```
 

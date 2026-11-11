@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createScenario, parseProject, createProject, fingerprint, validateScenario } from '../src/model/project.js';
-import { Simulation, STEP } from '../src/simulation/engine.js';
+import { Simulation, STEP, GAP, queueExtent } from '../src/simulation/engine.js';
+import { compileNetwork, pathsConflict, movementType, chooseRoute } from '../src/model/network.js';
 import { cycleLength, isGreen, signalState } from '../src/simulation/signals.js';
 import { timingCandidates, runReplications, summarize } from '../src/simulation/experiments.js';
 import { csvReport, resultsAreStale, comparisonWarnings } from '../src/ui/reports.js';
@@ -39,6 +40,25 @@ test('repeat runs are deterministic and conserve all requested vehicles', () => 
   assert.equal(first.simulatedSeconds, s.run.duration);
 });
 
+// Shared invariants checked at every step: conservation, spacing on every lane,
+// and no two vehicles using conflicting junction paths at the same time.
+function assertInvariants(simulation) {
+  const r = simulation.result();
+  assert.equal(r.requested, r.completed + r.inNetwork + r.waiting);
+  assert.equal(r.admitted, r.completed + r.inNetwork);
+  for (const link of Object.values(simulation.links)) for (const lane of link.lanes) {
+    for (let i = 1; i < lane.length; i++) {
+      assert.ok(lane[i - 1].position - lane[i - 1].length - lane[i].position >= GAP - 1e-8, `spacing on ${link.id}`);
+    }
+    assert.ok(lane.every(v => v.position >= v.length - 1e-8), `vehicle behind start of ${link.id}`);
+    if (link.to) assert.ok(lane.every(v => v.position <= link.length + 1e-8), `vehicle past stop line on ${link.id}`);
+  }
+  const crossing = simulation.crossing;
+  for (let i = 0; i < crossing.length; i++) for (let j = i + 1; j < crossing.length; j++) {
+    assert.ok(!pathsConflict(simulation.network, crossing[i].path, crossing[j].path), `conflicting paths ${crossing[i].path.key} / ${crossing[j].path.key}`);
+  }
+}
+
 test('overloaded boundaries retain demand and preserve lane spacing at each step', () => {
   const s = createScenario();
   s.geometry.lanes = 1;
@@ -47,23 +67,7 @@ test('overloaded boundaries retain demand and preserve lane spacing at each step
   s.signals.northSouth = 300;
   for (const d of ['north', 'east', 'south', 'west']) s.demand[d] = 3600;
   const simulation = new Simulation(s);
-  while (!simulation.done) {
-    simulation.step();
-    const r = simulation.result();
-    assert.equal(r.requested, r.completed + r.inNetwork + r.waiting);
-    for (const approach of Object.values(simulation.approaches)) for (const lane of approach.lanes) {
-      for (let i = 1; i < lane.length; i++) {
-        assert.ok(lane[i - 1].position - lane[i - 1].length - lane[i].position >= 2.5 - 1e-8);
-      }
-      assert.ok(lane.every(v => v.position >= v.length && v.position <= s.geometry.length));
-    }
-    for (const direction of ['north', 'east', 'south', 'west']) {
-      const exits = simulation.exiting.filter(v => v.exit === direction).sort((a, b) => b.position - a.position);
-      for (let i = 1; i < exits.length; i++) assert.ok(exits[i - 1].position - exits[i - 1].length - exits[i].position >= 2.5 - 1e-8);
-    }
-    const axes = new Set(simulation.crossing.map(v => ['east', 'west'].includes(v.direction) ? 'ew' : 'ns'));
-    assert.ok(axes.size <= 1, 'incompatible crossing groups must never overlap');
-  }
+  while (!simulation.done) { simulation.step(); assertInvariants(simulation); }
   const r = simulation.result();
   assert.ok(r.waiting > 0);
   assert.ok(r.queues.west.entryBlockedSeconds > 0);
@@ -177,4 +181,86 @@ test('sweeps vary the chosen group and demand level without being reported stale
   assert.equal(resultsAreStale(results, [s]), false);
   assert.ok(!comparisonWarnings(results).some(w => /Demand differ/.test(w)));
   assert.equal(sweepFindings(results).best.length, 2);
+});
+
+test('every template keeps invariants with turning traffic and routes follow connected links', () => {
+  for (const template of ['fourArm', 'tJunction', 'corridor']) {
+    const s = createScenario();
+    s.template = template;
+    s.turning = { left: 25, right: 25 };
+    s.run.duration = 400;
+    s.geometry.spacing = 80;
+    for (const d of ['north', 'east', 'south', 'west']) s.demand[d] = 900;
+    const simulation = new Simulation(s);
+    const routes = [];
+    const make = simulation.makeVehicle.bind(simulation);
+    simulation.makeVehicle = (...args) => { const v = make(...args); routes.push(v.route); return v; };
+    while (!simulation.done) { simulation.step(); assertInvariants(simulation); }
+    assert.ok(simulation.result().completed > 0, template);
+    for (const route of routes) {
+      for (let i = 1; i < route.length; i++) assert.equal(simulation.network.byId[route[i - 1]].to, simulation.network.byId[route[i]].from);
+      assert.equal(simulation.network.byId[route.at(-1)].kind, 'exit');
+      assert.notEqual(route.at(-1), `${route[0]}-out`, 'no U-turns');
+    }
+  }
+});
+
+test('turn movements follow left-hand traffic and declared shares', () => {
+  assert.equal(movementType('west', 'north'), 'left');
+  assert.equal(movementType('west', 'south'), 'right');
+  assert.equal(movementType('south', 'west'), 'left');
+  assert.equal(movementType('east', 'west'), 'straight');
+  const s = createScenario();
+  s.turning = { left: 100, right: 0 };
+  for (const d of ['north', 'east', 'south']) s.demand[d] = 0;
+  const r = new Simulation(s).runToEnd();
+  assert.ok(r.completed > 0);
+  assert.deepEqual(Object.keys(r.exitCounts), ['north-out']);
+  // The T-junction stem has no straight movement; shares renormalise to left/right.
+  const t = createScenario(); t.template = 'tJunction'; t.turning = { left: 0, right: 0 };
+  const network = compileNetwork(t);
+  const exits = new Set([0.1, 0.9].map(d => chooseRoute(network, 'south', t.turning, [d]).route.at(-1)));
+  assert.deepEqual([...exits].sort(), ['east-out', 'west-out']);
+  assert.equal(network.nodes[0].inbound.north, undefined);
+});
+
+test('a restricted downstream junction spills back along the corridor link', () => {
+  const s = createScenario();
+  s.template = 'corridor';
+  s.geometry.spacing = 80;
+  s.geometry.lanes = 1;
+  s.demand.west = 1200; s.demand.east = 0; s.demand.north = 0; s.demand.south = 0;
+  // A releases a platoon longer than the 80 m link stores while B, offset by
+  // half a cycle, is red: the queue must reach back into junction A.
+  s.signals.eastWest = 30; s.signals.northSouth = 120; s.signals.offset = 80;
+  s.run.duration = 900;
+  const simulation = new Simulation(s);
+  while (!simulation.done) { simulation.step(); assertInvariants(simulation); }
+  const r = simulation.result();
+  assert.ok(r.queues['A-B'].spillbackSeconds > 0, 'queue reaches junction A');
+  assert.ok(r.queues.west.downstreamBlockedSeconds > 0, 'west approach blocked by the full link');
+  assert.ok(r.waiting > 0);
+});
+
+test('queue extent counts only a slow chain from the stop line', () => {
+  const link = { length: 200, lanes: [[
+    { position: 199, length: 4.5, speed: 0 },
+    { position: 190, length: 4.5, speed: 0.5 },
+    { position: 120, length: 4.5, speed: 0 },
+  ]] };
+  assert.equal(queueExtent(link), 200 - (190 - 4.5));
+  link.lanes[0][0].speed = 5;
+  assert.equal(queueExtent(link), 0);
+});
+
+test('schema 1 projects migrate to the straight-through four-arm template', () => {
+  const project = createProject();
+  const v1 = structuredClone(project.scenarios[0]);
+  delete v1.template; delete v1.turning; delete v1.geometry.spacing;
+  const loaded = parseProject(JSON.stringify({ schemaVersion: 1, scenarios: [v1] }));
+  assert.equal(loaded.scenarios[0].template, 'fourArm');
+  assert.deepEqual(loaded.scenarios[0].turning, { left: 0, right: 0 });
+  assert.deepEqual(validateScenario(loaded.scenarios[0]), []);
+  const bad = structuredClone(project.scenarios[0]); bad.turning = { left: 70, right: 40 };
+  assert.match(validateScenario(bad).join(' '), /exceed 100/);
 });
