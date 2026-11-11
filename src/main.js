@@ -1,10 +1,11 @@
 import { createProject, validateScenario, parseProject, DIRECTIONS, FLEET, APPROACH_FIELDS, PROFILE_PRESETS, profilePreset } from './model/project.js';
 import { lineChart } from './ui/charts.js';
 import { modelChecks } from './model/checks.js';
+import { changeSummary, changeText, scenarioChanges } from './model/changes.js';
 import { Simulation, STEP } from './simulation/engine.js';
 import { cycleLength } from './simulation/signals.js';
 import { TEMPLATES, approachSettings, compileNetwork, configurableApproaches, inboundLinks } from './model/network.js';
-import { DEMAND_LEVELS, SWEEP_GROUPS, sweepConfigurations } from './simulation/experiments.js';
+import { DEMAND_LEVELS, PRECISION, SWEEP_GROUPS, sweepConfigurations } from './simulation/experiments.js';
 import { explainApproach } from './diagnostics/explain.js';
 import { NetworkCanvas } from './ui/canvas.js';
 import { escapeHTML as esc, format, download, renderResults, renderTimeCharts, comparisonWarnings, resultsAreStale, csvReport, printMetadata } from './ui/reports.js';
@@ -129,12 +130,23 @@ function profileFields() {
       <p class="field-hint">Each approach's veh/h is multiplied by the factor for the current period; the last factor holds after the profile ends. Presets span the run in six periods.</p>`;
 }
 
+// What the active scenario changes relative to the first (baseline) scenario.
+function renderChangeSummary() {
+  const box = $('change-summary');
+  const baseline = project.scenarios[0];
+  if (active() === baseline) { box.hidden = true; return; }
+  const changes = scenarioChanges(baseline, active());
+  box.hidden = false;
+  box.innerHTML = `<h4>Changes from baseline · ${esc(baseline.name)}</h4>${changes.length ? `<ul>${changes.map(c => `<li class="change-${c.kind}">${esc(changeText(c))}</li>`).join('')}</ul>` : ''}<p>${esc(changeSummary(changes))}</p>`;
+}
+
 function validate() {
   const errors = validateScenario(active());
   $('validation').hidden = !errors.length;
   $('validation').textContent = errors.join(' ');
   const findings = errors.length ? [] : modelChecks(active());
   $('model-checks').hidden = !findings.length;
+  renderChangeSummary();
   $('model-checks').innerHTML = findings.length ? `<h4>Model checks</h4><ul>${findings.map(f => `<li class="check-${f.level}"><strong>${f.level === 'warning' ? 'Review' : 'Note'}: ${esc(f.title)}</strong><span>${esc(f.detail)}</span></li>`).join('')}</ul>` : '';
   $('play-button').disabled = !!errors.length;
   $('duplicate-button').disabled = !!errors.length || project.scenarios.length >= 30;
@@ -423,7 +435,7 @@ function startExperiment(request, label) {
   setBusy(true);
   $('experiment-status').textContent = `${label} · running in a background worker…`;
   worker.onmessage = ({ data }) => {
-    if (data.type === 'progress') $('experiment-status').textContent = `${label} · ${data.completed} / ${data.total} alternatives complete`;
+    if (data.type === 'progress') $('experiment-status').textContent = data.text ? `${label} · ${data.text}` : `${label} · ${data.completed} / ${data.total} alternatives complete`;
     if (data.type === 'error') { stopExperiment(); $('experiment-status').textContent = `Experiment failed: ${data.message}`; notice(data.message, 'error'); }
     if (data.type === 'complete') {
       results = data.results;
@@ -431,17 +443,20 @@ function startExperiment(request, label) {
       renderResults(results, $('results-table'), $('results-chart'));
       renderTimeCharts(results, $('time-charts'));
       refreshWarnings();
-      $('experiment-status').textContent = `${label} · ${results.length} alternatives · ${request.count} seeds each · illustrative`;
+      $('experiment-status').textContent = request.adaptive
+        ? `${label} · ${results.length} alternatives · ${results[0].runs.length} seeds each (added until precise, limit ${PRECISION.max}) · illustrative`
+        : `${label} · ${results.length} alternatives · ${request.count} seeds each · illustrative`;
       $('csv-button').disabled = false; $('report-button').disabled = false;
       notice('Experiment complete. Read waiting demand and completion counts alongside delay.', 'success');
     }
   };
   worker.onerror = event => { stopExperiment(); $('experiment-status').textContent = 'Experiment failed to load.'; notice(`Worker error: ${event.message}. Serve the app over HTTP rather than opening the HTML file directly.`, 'error'); };
-  worker.postMessage({ ...request, count: Number($('replications').value) });
+  worker.postMessage(request);
 }
 $('compare-button').addEventListener('click', () => {
   if (project.scenarios.length < 2) { notice('Create an alternative with Duplicate in the design view before comparing.', 'error'); return; }
-  startExperiment({ type: 'compare', scenarios: structuredClone(project.scenarios), count: Number($('replications').value) }, 'Scenario comparison');
+  const adaptive = $('replications').value === 'adaptive';
+  startExperiment({ type: 'compare', scenarios: structuredClone(project.scenarios), adaptive, count: adaptive ? PRECISION.initial : Number($('replications').value) }, 'Scenario comparison');
 });
 $('sweep-button').addEventListener('click', () => {
   const start = Number($('sweep-start').value), end = Number($('sweep-end').value), increment = Number($('sweep-step').value);
@@ -450,7 +465,7 @@ $('sweep-button').addEventListener('click', () => {
   const multipliers = $('sweep-demand-levels').checked ? DEMAND_LEVELS.map(l => l.multiplier) : [active().demand.multiplier];
   try { sweepConfigurations({ group, start, end, increment, multipliers }); }
   catch (error) { notice(error.message, 'error'); return; }
-  startExperiment({ type: 'sweep', scenario: structuredClone(active()), group, start, end, increment, multipliers, count: Number($('replications').value) }, `${SWEEP_GROUPS[group][0].toUpperCase() + SWEEP_GROUPS[group].slice(1)} timing sweep`);
+  startExperiment({ type: 'sweep', scenario: structuredClone(active()), group, start, end, increment, multipliers, count: $('replications').value === 'adaptive' ? PRECISION.initial : Number($('replications').value) }, `${SWEEP_GROUPS[group][0].toUpperCase() + SWEEP_GROUPS[group].slice(1)} timing sweep`);
 });
 $('cancel-button').addEventListener('click', () => { stopExperiment(); $('experiment-status').textContent = `${experimentLabel} cancelled. Any displayed results are from the previous completed experiment.`; notice('Experiment cancelled.'); });
 $('csv-button').addEventListener('click', () => download('junction-results.csv', csvReport(results), 'text/csv;charset=utf-8'));

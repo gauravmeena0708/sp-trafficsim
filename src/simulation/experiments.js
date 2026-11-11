@@ -96,17 +96,30 @@ export function sweepFindings(results) {
   return { best, changesWithDemand: best.length > 1 && distinct.size > 1 };
 }
 
-export function runReplications(scenario, count = 3) {
-  if (!Number.isInteger(count) || count < 1 || count > 10) throw new Error('Use 1–10 replications.');
-  const full = Array.from({ length: count }, (_, i) => {
+// Run seeds base+from … base+from+count−1. Returns the runs without their time
+// series and, separately, the series (kept only to form the mean across seeds).
+function runSeeds(scenario, from, count) {
+  const runs = [], series = [];
+  for (let i = from; i < from + count; i++) {
     const copy = structuredClone(scenario);
     copy.run.seed += i;
-    return new Simulation(copy).runToEnd();
-  });
-  // Keep the per-seed time series out of stored runs; the mean across seeds is
-  // kept once per alternative so results and project files stay small.
-  const series = meanSeries(full.map(r => r.series));
-  const runs = full.map(({ series: _series, ...rest }) => rest);
+    const { series: s, ...rest } = new Simulation(copy).runToEnd();
+    runs.push(rest);
+    series.push(s);
+  }
+  return { runs, series };
+}
+
+export function runReplications(scenario, count = 3) {
+  if (!Number.isInteger(count) || count < 1 || count > 10) throw new Error('Use 1–10 replications.');
+  const { runs, series } = runSeeds(scenario, 0, count);
+  return summarizeRuns(scenario, runs, series);
+}
+
+// Keep the per-seed time series out of stored runs; the mean across seeds is
+// kept once per alternative so results and project files stay small.
+function summarizeRuns(scenario, runs, seriesList) {
+  const series = meanSeries(seriesList);
   return { name: scenario.name, scenarioId: scenario.id, inputs: structuredClone(scenario), runs, series,
     delay: summarize(runs.map(r => r.accruedDelayPerRequest)),
     journey: summarize(runs.map(r => r.meanJourney)),
@@ -116,6 +129,54 @@ export function runReplications(scenario, count = 3) {
     persistent: summarize(runs.map(r => r.persistentQueueSeconds)),
     unresolved: summarize(runs.map(r => r.unresolvedQueues)),
   };
+}
+
+// Declared rule for adding replications until the comparison is precise enough.
+// The primary indicator is accrued delay per request; the target half-width is
+// the larger of PRECISION.absolute seconds and PRECISION.relative × baseline delay.
+export const PRECISION = { initial: 5, step: 2, max: 20, relative: 0.05, absolute: 1 };
+export const VERDICTS = {
+  lower: 'Lower delay than baseline',
+  higher: 'Higher delay than baseline',
+  equivalent: 'No difference beyond the precision target',
+  inconclusive: 'Inconclusive at the seed limit',
+  unpaired: 'Not paired with the baseline',
+};
+
+// Classify one alternative's paired delay difference against the baseline.
+export function precisionVerdict(difference, target, atLimit) {
+  if (!difference || difference.low === null) return atLimit ? 'inconclusive' : null;
+  if (difference.high < 0) return 'lower';
+  if (difference.low > 0) return 'higher';
+  if ((difference.high - difference.low) / 2 <= target) return 'equivalent';
+  return atLimit ? 'inconclusive' : null;
+}
+
+// Paired comparison that adds PRECISION.step seeds to every scenario (keeping
+// seeds paired) until each alternative's delay difference is clear: its 95%
+// interval excludes zero, or is narrower than the target, or the seed limit
+// is reached.
+export function runAdaptiveComparison(scenarios, onProgress = () => {}) {
+  const state = scenarios.map(scenario => ({ scenario, runs: [], series: [] }));
+  const add = count => state.forEach(s => {
+    const next = runSeeds(s.scenario, s.runs.length, count);
+    s.runs.push(...next.runs);
+    s.series.push(...next.series);
+  });
+  add(PRECISION.initial);
+  for (;;) {
+    const seeds = state[0].runs.length;
+    const results = attachBaselineDifferences(state.map(s => summarizeRuns(s.scenario, s.runs, s.series)));
+    const baselineDelay = Math.abs(results[0].delay.mean ?? 0);
+    const target = Math.max(PRECISION.absolute, PRECISION.relative * baselineDelay);
+    const atLimit = seeds >= PRECISION.max;
+    const verdicts = results.map((r, i) => i === 0 ? 'baseline' : r.differenceNote ? 'unpaired' : precisionVerdict(r.differences.accruedDelayPerRequest, target, atLimit));
+    onProgress(seeds, verdicts.filter(v => v === null).length);
+    if (atLimit || verdicts.every(v => v !== null)) {
+      return results.map((r, i) => ({ ...r, precision: { verdict: verdicts[i], seeds, target, rule: PRECISION } }));
+    }
+    add(Math.min(PRECISION.step, PRECISION.max - seeds));
+  }
 }
 
 // Mean across seeds at each sample time (all runs share the same sample times).

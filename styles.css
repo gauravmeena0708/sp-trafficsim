@@ -1359,3 +1359,58 @@ dialog p{
   stroke-width:1.5;
   stroke-dasharray:4 3
 }
+.change-summary{
+  font-size:10.5px;
+  line-height:1.55;
+  background:#f3f6fb;
+  border:1px solid #dbe3ee;
+  border-radius:5px;
+  padding:10px 12px;
+  margin-top:10px;
+  color:#4f5d68
+}
+.change-summary h4{
+  font-size:11px;
+  margin-bottom:6px;
+  color:#2d3d48
+}
+.change-summary ul,.change-list ul{
+  margin:0 0 6px;
+  padding-left:14px
+}
+.change-summary p{
+  margin:0
+}
+.change-list{
+  font-size:10px;
+  font-weight:400;
+  margin-top:4px;
+  white-space:normal;
+  max-width:280px
+}
+.change-list summary{
+  cursor:pointer;
+  color:var(--green)
+}
+li.change-assumption,li.change-run{
+  color:#8a5a22
+}
+.verdict{
+  margin-bottom:4px;
+  white-space:normal
+}
+.verdict strong{
+  font-weight:600
+}
+.verdict span{
+  color:var(--muted)
+}
+.verdict-lower strong{
+  color:#2a6b3a
+}
+.verdict-higher strong{
+  color:#9b4433
+}
+.verdict-inconclusive strong{
+  color:#8a5a22
+}

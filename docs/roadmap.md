@@ -51,9 +51,9 @@ The full Phase 1 in the product plan is large. Deliver it in this order, so each
 
 - [x] Time-varying demand profiles (shared by all approaches; per-approach profiles not yet).
 - [x] Persistent queue events across cycles, marked on the run timeline and listed in the inspector. (Seeking to an event needs replay, below.)
-- [ ] Precision-based additional replications.
+- [x] Precision-based additional replications ("until precise": paired seeds added until each verdict is clear, limit 20).
 - [x] Time-series charts in comparisons (longest queue, waiting demand) and a live per-approach queue chart.
-- [ ] Change summaries between alternatives.
+- [x] Change summaries between alternatives (design / assumption / run), in the design view, results, CSV and report.
 - [ ] Undo/redo, baseline locking, autosave recovery.
 
 ### Then: navigable 3D

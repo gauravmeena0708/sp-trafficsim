@@ -77,6 +77,17 @@ Physics uses 0.2-second steps; playback speed changes wall-clock execution only.
 - Results report the mean and sample standard deviation across seeds.
 - Scenario comparisons also report the **paired difference** between each alternative and the first (baseline) scenario. Runs are matched by seed, and a two-sided 95% interval uses Student's t with n − 1 degrees of freedom. Pairing is only claimed when demand, fleet and run settings match; otherwise the difference is withheld.
 - These intervals describe run-to-run random variation only. They do not cover uncertainty in demand, behaviour parameters or model form. Three replications is an exploratory default, not a precision target.
+- **Until precise (declared stopping rule).** The primary indicator is accrued delay per request.
+  - Every scenario runs 5 seeds. Then 2 more seeds are added to *every* scenario at a time, keeping them paired, until each alternative's paired 95% interval on delay either excludes zero (**lower** or **higher** delay than the baseline) or has a half-width within the target (**no difference beyond the target**). The target is the larger of ±1 s and ±5% of the baseline mean delay.
+  - The limit is 20 seeds; anything still open is reported **inconclusive**.
+  - Alternatives whose demand, fleet or run settings differ are **not paired** and get no verdict.
+  - The verdict concerns delay only. Read queues, waiting demand and completed trips alongside it. Repeatedly checking the interval as seeds are added makes the 95% coverage approximate, and the limit bounds the effect. Sweeps always use 5 seeds.
+- **Change summaries.** Each alternative lists what differs from the first (baseline) scenario, in planner terms (for example "West approach: right-turn pocket: shared value → 40 m"). Changes are classed as:
+  - **design:** layout, approach geometry, signals;
+  - **assumption:** demand, turning shares, demand profile, fleet;
+  - **run:** duration, warm-up, seed.
+
+  An alternative with only design changes is labelled an infrastructure-only comparison. The list appears in the design view, the results table, the CSV and the printed report.
 - Timing sweeps can vary either signal group's green and test low (0.75×), central (1×) and high (1.25×) demand. The lowest-mean-delay candidate is reported per demand level, and a warning appears when it differs between levels.
 
 ## Measurement windows and metrics

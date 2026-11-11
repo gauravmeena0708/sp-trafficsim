@@ -1,5 +1,6 @@
 import { fingerprint, ENGINE_VERSION } from '../model/project.js';
-import { sweepFindings } from '../simulation/experiments.js';
+import { sweepFindings, VERDICTS } from '../simulation/experiments.js';
+import { changeSummary, changeText, scenarioChanges } from '../model/changes.js';
 import { lineChart, MAX_SERIES } from './charts.js';
 
 export const format = (value, digits = 1) => value === null || value === undefined || !Number.isFinite(value) ? '—' : value.toLocaleString('en', { maximumFractionDigits: digits, minimumFractionDigits: digits });
@@ -19,12 +20,26 @@ export function differenceText(d) {
   return d.low === null ? `${signed(d.mean)} (n=${d.n}, no interval)` : `${signed(d.mean)} [${signed(d.low)}, ${signed(d.high)}]`;
 }
 
+function verdictHTML(r) {
+  if (!r.precision || r.precision.verdict === 'baseline') return '';
+  const { verdict, seeds, target } = r.precision;
+  return `<div class="verdict verdict-${verdict}"><strong>${escapeHTML(VERDICTS[verdict] ?? verdict)}</strong> <span>after ${seeds} seeds · target ±${format(target)} s</span></div>`;
+}
+
+// Changes from the baseline (first result), shown under each alternative's name.
+function changesHTML(r, baseline) {
+  if (r === baseline || r.sweep) return '';
+  const changes = scenarioChanges(baseline.inputs, r.inputs);
+  if (!changes.length) return '<div class="change-list"><span class="subtle">Identical inputs to the baseline</span></div>';
+  return `<details class="change-list"><summary>${changes.length} change${changes.length === 1 ? '' : 's'} vs baseline</summary><ul>${changes.map(c => `<li class="change-${c.kind}">${escapeHTML(changeText(c))}</li>`).join('')}</ul><p class="subtle">${escapeHTML(changeSummary(changes))}</p></details>`;
+}
+
 function differenceCell(r) {
   if (r.baseline) return 'Baseline';
   if (r.differenceNote) return escapeHTML(r.differenceNote);
   if (!r.differences) return '—';
   const d = r.differences;
-  return `Delay ${differenceText(d.accruedDelayPerRequest)} s<br>Waiting ${differenceText(d.waiting)}<br>Completed ${differenceText(d.completed)}<br>Persistent queue ${differenceText(d.persistentQueueSeconds)} s`;
+  return `${verdictHTML(r)}Delay ${differenceText(d.accruedDelayPerRequest)} s<br>Waiting ${differenceText(d.waiting)}<br>Completed ${differenceText(d.completed)}<br>Persistent queue ${differenceText(d.persistentQueueSeconds)} s`;
 }
 
 function findingsHTML(results) {
@@ -36,7 +51,7 @@ function findingsHTML(results) {
 
 export function renderResults(results, table, chart) {
   const hasDiffs = results.some(r => r.baseline);
-  table.innerHTML = `<table><caption class="sr-only">Mean and sample standard deviation across repeated seeds</caption><thead><tr><th scope="col">Alternative</th><th scope="col">Accrued delay / request (s)</th><th scope="col">Completed-trip time (s)</th><th scope="col">Max queue (m)</th><th scope="col">Waiting outside</th><th scope="col">Completed trips</th><th scope="col">Persistent queue (link-min)</th><th scope="col">Unresolved at end</th><th scope="col">Runs</th>${hasDiffs ? '<th scope="col">Paired change vs baseline, mean [95% CI]</th>' : ''}</tr></thead><tbody>${results.map(r => `<tr><td>${escapeHTML(r.name)}</td><td>${stat(r.delay)}</td><td>${stat(r.journey)}</td><td>${stat(r.queue)}</td><td>${stat(r.waiting)}</td><td>${stat(r.completed)}</td><td>${r.persistent ? stat({ mean: r.persistent.mean === null ? null : r.persistent.mean / 60, sd: r.persistent.sd === null ? null : r.persistent.sd / 60 }) : '—'}</td><td>${r.unresolved ? stat(r.unresolved) : '—'}</td><td>${r.runs.length}</td>${hasDiffs ? `<td>${differenceCell(r)}</td>` : ''}</tr>`).join('')}</tbody></table>${findingsHTML(results)}`;
+  table.innerHTML = `<table><caption class="sr-only">Mean and sample standard deviation across repeated seeds</caption><thead><tr><th scope="col">Alternative</th><th scope="col">Accrued delay / request (s)</th><th scope="col">Completed-trip time (s)</th><th scope="col">Max queue (m)</th><th scope="col">Waiting outside</th><th scope="col">Completed trips</th><th scope="col">Persistent queue (link-min)</th><th scope="col">Unresolved at end</th><th scope="col">Runs</th>${hasDiffs ? '<th scope="col">Paired change vs baseline, mean [95% CI]</th>' : ''}</tr></thead><tbody>${results.map(r => `<tr><td>${escapeHTML(r.name)}${changesHTML(r, results[0])}</td><td>${stat(r.delay)}</td><td>${stat(r.journey)}</td><td>${stat(r.queue)}</td><td>${stat(r.waiting)}</td><td>${stat(r.completed)}</td><td>${r.persistent ? stat({ mean: r.persistent.mean === null ? null : r.persistent.mean / 60, sd: r.persistent.sd === null ? null : r.persistent.sd / 60 }) : '—'}</td><td>${r.unresolved ? stat(r.unresolved) : '—'}</td><td>${r.runs.length}</td>${hasDiffs ? `<td>${differenceCell(r)}</td>` : ''}</tr>`).join('')}</tbody></table>${findingsHTML(results)}`;
   const max = Math.max(1, ...results.map(r => r.delay.mean ?? 0));
   chart.hidden = false;
   chart.innerHTML = `<h3>Accrued delay per requested vehicle <span class="subtle">/ seconds · unfinished demand included</span></h3>${results.map(r => `<div class="bar-row"><span>${escapeHTML(r.name)}</span><div class="bar-track"><div class="bar-fill" style="width:${Math.max(0, (r.delay.mean ?? 0) / max * 100)}%"></div></div><span>${format(r.delay.mean)} s</span></div>`).join('')}`;
@@ -86,8 +101,10 @@ export function resultsAreStale(results, scenarios) {
 }
 
 export function csvReport(results) {
-  const rows = [['scenario', 'engine', 'seed', 'duration_s', 'warmup_s', 'ew_green_s', 'ns_green_s', 'demand_multiplier', 'accrued_delay_per_request_s', 'accrued_delay_per_person_s', 'completed_trip_mean_s', 'completed_trip_p95_s', 'max_queue_m', 'requested_total', 'admitted_total', 'completed_total', 'in_network', 'waiting_outside', 'measured_requested', 'measured_completed', 'persistent_queue_s', 'unresolved_queues', 'queue_events', 'inputs_json']];
-  for (const result of results) for (const r of result.runs) rows.push([result.name, r.engineVersion, r.seed, r.inputs.run.duration, r.inputs.run.warmup, r.inputs.signals.eastWest, r.inputs.signals.northSouth, r.inputs.demand.multiplier, r.accruedDelayPerRequest, r.accruedDelayPerPerson, r.meanJourney, r.p95Journey, r.maxQueue, r.requested, r.admitted, r.completed, r.inNetwork, r.waiting, r.measuredRequested, r.measuredCompleted, r.persistentQueueSeconds, r.unresolvedQueues, (r.queueEvents ?? []).map(e => `${e.link}@${e.start}-${e.end ?? 'end'}`).join(' '), JSON.stringify(r.inputs)]);
+  const rows = [['scenario', 'engine', 'seed', 'duration_s', 'warmup_s', 'ew_green_s', 'ns_green_s', 'demand_multiplier', 'accrued_delay_per_request_s', 'accrued_delay_per_person_s', 'completed_trip_mean_s', 'completed_trip_p95_s', 'max_queue_m', 'requested_total', 'admitted_total', 'completed_total', 'in_network', 'waiting_outside', 'measured_requested', 'measured_completed', 'persistent_queue_s', 'unresolved_queues', 'queue_events', 'changes_vs_baseline', 'precision_verdict', 'inputs_json']];
+  for (const result of results) for (const r of result.runs) rows.push([result.name, r.engineVersion, r.seed, r.inputs.run.duration, r.inputs.run.warmup, r.inputs.signals.eastWest, r.inputs.signals.northSouth, r.inputs.demand.multiplier, r.accruedDelayPerRequest, r.accruedDelayPerPerson, r.meanJourney, r.p95Journey, r.maxQueue, r.requested, r.admitted, r.completed, r.inNetwork, r.waiting, r.measuredRequested, r.measuredCompleted, r.persistentQueueSeconds, r.unresolvedQueues, (r.queueEvents ?? []).map(e => `${e.link}@${e.start}-${e.end ?? 'end'}`).join(' '),
+    result === results[0] || result.sweep ? '' : scenarioChanges(results[0].inputs, result.inputs).map(changeText).join('; '),
+    result.precision?.verdict ?? '', JSON.stringify(r.inputs)]);
   // Prevent spreadsheet formula execution in user-supplied scenario names.
   return rows.map(row => row.map(value => {
     const text = String(value ?? '');
@@ -96,6 +113,11 @@ export function csvReport(results) {
 }
 
 export function printMetadata(results) {
-  const differences = results.filter(r => r.differences).map(r => `${r.name} vs ${results[0].name}: delay ${differenceText(r.differences.accruedDelayPerRequest)} s; waiting ${differenceText(r.differences.waiting)}; completed ${differenceText(r.differences.completed)}`);
-  return `JUNCTION — ILLUSTRATIVE PLANNING REPORT\nEngine: ${ENGINE_VERSION}\nGenerated: ${new Date().toISOString()}\nUncalibrated lane model. See model assumptions for omitted behaviour.\nStatistics: mean ± sample SD across seeds. Paired changes vs the baseline use matched seeds with t-based 95% intervals; they describe run-to-run variation only, not uncertainty in demand or behaviour inputs.\nPersistent queues: an approach whose queued vehicles at the start of green are not all cleared by its end, for 2+ consecutive cycles (60 s windows at roundabouts).\nJourney times describe completed measured trips only. Accrued delay includes unfinished measured demand and boundary waiting. Queue threshold: speed < 2 m/s.\n${comparisonWarnings(results).join('\n')}\n${differences.join('\n')}\n\n${results.map(r => `${r.name}\nSeeds: ${r.runs.map(x => x.seed).join(', ')}\nInputs: ${JSON.stringify(r.inputs)}\nAccounting per run: ${r.runs.map(x => `requested ${x.requested} = completed ${x.completed} + network ${x.inNetwork} + outside ${x.waiting}`).join('; ')}`).join('\n\n')}`;
+  const differences = results.filter(r => r.differences).map(r => `${r.name} vs ${results[0].name}: delay ${differenceText(r.differences.accruedDelayPerRequest)} s; waiting ${differenceText(r.differences.waiting)}; completed ${differenceText(r.differences.completed)}${r.precision ? ` — ${VERDICTS[r.precision.verdict] ?? r.precision.verdict} (${r.precision.seeds} seeds, target ±${format(r.precision.target)} s)` : ''}`);
+  const changes = results.slice(1).filter(r => !r.sweep).map(r => {
+    const list = scenarioChanges(results[0].inputs, r.inputs);
+    return `Changes in ${r.name}: ${list.length ? list.map(changeText).join('; ') : 'none'}. ${changeSummary(list)}`;
+  });
+  const rule = results.some(r => r.precision) ? `Replications: added in pairs from ${results[0].precision?.rule.initial ?? 5} until each alternative's 95% interval on delay excludes zero or is within ±max(${results[0].precision?.rule.absolute ?? 1} s, ${(results[0].precision?.rule.relative ?? 0.05) * 100}% of baseline delay), up to ${results[0].precision?.rule.max ?? 20} seeds.\n` : '';
+  return `JUNCTION — ILLUSTRATIVE PLANNING REPORT\nEngine: ${ENGINE_VERSION}\nGenerated: ${new Date().toISOString()}\nUncalibrated lane model. See model assumptions for omitted behaviour.\nStatistics: mean ± sample SD across seeds. Paired changes vs the baseline use matched seeds with t-based 95% intervals; they describe run-to-run variation only, not uncertainty in demand or behaviour inputs.\nPersistent queues: an approach whose queued vehicles at the start of green are not all cleared by its end, for 2+ consecutive cycles (60 s windows at roundabouts).\nJourney times describe completed measured trips only. Accrued delay includes unfinished measured demand and boundary waiting. Queue threshold: speed < 2 m/s.\n${rule}${comparisonWarnings(results).join('\n')}\n${changes.join('\n')}\n${differences.join('\n')}\n\n${results.map(r => `${r.name}\nSeeds: ${r.runs.map(x => x.seed).join(', ')}\nInputs: ${JSON.stringify(r.inputs)}\nAccounting per run: ${r.runs.map(x => `requested ${x.requested} = completed ${x.completed} + network ${x.inNetwork} + outside ${x.waiting}`).join('; ')}`).join('\n\n')}`;
 }

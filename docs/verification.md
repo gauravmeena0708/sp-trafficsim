@@ -1,5 +1,15 @@
 # Verification record
 
+## Change summaries and precision-based replications — 11 November 2026
+
+- `npm test`: 38 passed (5 new in `test/comparisons.test.js`):
+  - change summaries give labels, units and design/assumption/run classes, with turning shares classed as assumptions and design changes first;
+  - each precision verdict follows the rule;
+  - a 5 s east–west green is clearly **higher** delay, identical inputs are **equivalent**, and different demand is **not paired**, all settled at the initial 5 paired seeds;
+  - a marginal 1 s change adds seeds in steps of at most 2 within 5–20 seeds;
+  - the CSV and printed report carry change lists, verdicts and the stopping rule.
+- `npm run test:browser`: 13 passed in Chrome 157. The new check confirms the design view lists an alternative's change (hidden for the baseline), and an "until precise" comparison shows a higher-delay verdict and a one-change list in the results.
+
 ## v0.4 demand profiles, time series and persistent queues — 11 November 2026
 
 - `npm test`: 33 passed (7 new in `test/demand-and-events.test.js`):
