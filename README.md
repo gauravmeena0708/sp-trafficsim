@@ -83,4 +83,4 @@ CLAUDE.md                  Working rules for contributors and coding agents
 .github/workflows/         CI and GitHub Pages deployment
 ```
 
-Read the [architecture decision](docs/architecture.md), [model assumptions](docs/model-assumptions.md), [delivery roadmap](docs/roadmap.md), and [verification record](docs/verification.md) before extending the engine. No project license has been selected yet; public hosting does not itself grant an open-source license.
+Read the [architecture decision](docs/architecture.md), [model assumptions](docs/model-assumptions.md), [delivery roadmap](docs/roadmap.md), and [verification record](docs/verification.md) before extending the engine. Released under the [MIT License](LICENSE). The license covers the code; it does not make simulation results fit for engineering decisions.

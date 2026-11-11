@@ -2,6 +2,7 @@
   "name": "sp-trafficsim",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "description": "An illustrative, browser-based traffic planning workbench for GitHub Pages.",
   "engines": { "node": ">=22" },
