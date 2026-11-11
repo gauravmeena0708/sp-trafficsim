@@ -49,7 +49,7 @@ Same machine and settings as v0.2 (600 simulated seconds, five seeds):
 
 ### Deployment
 
-Unchanged: the Pages source must be switched to **GitHub Actions** before the deploy workflow can succeed.
+On 11 November 2026 the Pages source was switched to **GitHub Actions**, so the site now deploys only from the workflow, after check, test and build pass.
 
 ## v0.2 network foundation — 11 November 2026
 
