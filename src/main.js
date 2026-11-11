@@ -1,4 +1,5 @@
-import { createProject, validateScenario, parseProject, DIRECTIONS, FLEET, APPROACH_FIELDS } from './model/project.js';
+import { createProject, validateScenario, parseProject, DIRECTIONS, FLEET, APPROACH_FIELDS, PROFILE_PRESETS, profilePreset } from './model/project.js';
+import { lineChart } from './ui/charts.js';
 import { modelChecks } from './model/checks.js';
 import { Simulation, STEP } from './simulation/engine.js';
 import { cycleLength } from './simulation/signals.js';
@@ -6,7 +7,7 @@ import { TEMPLATES, approachSettings, compileNetwork, configurableApproaches, in
 import { DEMAND_LEVELS, SWEEP_GROUPS, sweepConfigurations } from './simulation/experiments.js';
 import { explainApproach } from './diagnostics/explain.js';
 import { NetworkCanvas } from './ui/canvas.js';
-import { escapeHTML as esc, format, download, renderResults, comparisonWarnings, resultsAreStale, csvReport, printMetadata } from './ui/reports.js';
+import { escapeHTML as esc, format, download, renderResults, renderTimeCharts, comparisonWarnings, resultsAreStale, csvReport, printMetadata } from './ui/reports.js';
 
 const $ = id => document.getElementById(id);
 const STORAGE_KEY = 'junction.project.v2';
@@ -111,9 +112,21 @@ function renderSettings() {
       <p class="field-hint">Shared turning shares apply wherever an approach has none of its own; the remainder goes straight. At the roundabout, left, straight and right mean the first, second and third exit. Unavailable movements are dropped and the remaining shares rescaled.</p>
       <label class="field" style="margin-top:12px">Demand assumption<select data-path="demand.multiplier"><option value="0.75" ${active().demand.multiplier === .75 ? 'selected' : ''}>Low · 0.75×</option><option value="1" ${active().demand.multiplier === 1 ? 'selected' : ''}>Central · 1.00×</option><option value="1.25" ${active().demand.multiplier === 1.25 ? 'selected' : ''}>High · 1.25×</option>${![.75, 1, 1.25].includes(active().demand.multiplier) ? `<option selected value="${active().demand.multiplier}">Custom · ${active().demand.multiplier}×</option>` : ''}</select></label>
       <p class="field-hint">Growth sensitivity only. Population-to-trip estimation is planned.</p>
+      ${profileFields()}
     </section>
     <section class="settings-section"><div class="section-title"><h3>Vehicle mix</h3><span class="section-number">05</span></div><div class="input-grid">${Object.entries(FLEET).map(([key, spec]) => numberField(`${spec.label} (%)`, `fleet.${key}`, 0, 100)).join('')}</div><p id="fleet-total" class="field-hint">Total: 100% · shares must add up to 100</p></section>
     <section class="settings-section"><div class="section-title"><h3>Run settings</h3><span class="section-number">06</span></div><div class="input-grid">${numberField('Duration (s)', 'run.duration', 120, 3600)}${numberField('Warm-up (s)', 'run.warmup', 0, 3540)}${numberField('Random seed', 'run.seed', 1, 2147483647)}</div><p class="field-hint">Batch runs increment this seed. Warm-up vehicles stay in the model.</p></section>`;
+}
+
+// Demand over time: a preset written out as explicit period factors, or custom.
+function profileFields() {
+  const { preset, period, factors } = active().demand.profile;
+  const max = Math.max(1, ...factors.filter(Number.isFinite));
+  const bars = factors.map((f, i) => `<span style="height:${Math.max(2, (Number.isFinite(f) ? f : 0) / max * 100)}%" title="Period ${i + 1}: ${f}×"></span>`).join('');
+  return `<label class="field" style="margin-top:12px">Demand over time<select data-profile="preset">${Object.entries(PROFILE_PRESETS).map(([key, p]) => `<option value="${key}" ${preset === key ? 'selected' : ''}>${esc(p.label)}</option>`).join('')}<option value="custom" ${preset === 'custom' ? 'selected' : ''}>Custom factors</option></select></label>
+      <div class="profile-preview" role="img" aria-label="Demand factor by period: ${factors.join(', ')}">${bars}</div>
+      <div class="input-grid"><label class="field"><span>Period (min)</span><input type="number" data-profile="period" value="${+(period / 60).toFixed(2)}" min="1" max="60" step="any"></label><label class="field"><span>Factors per period</span><input type="text" data-profile="factors" value="${esc(factors.join(', '))}" inputmode="decimal"></label></div>
+      <p class="field-hint">Each approach's veh/h is multiplied by the factor for the current period; the last factor holds after the profile ends. Presets span the run in six periods.</p>`;
 }
 
 function validate() {
@@ -152,6 +165,39 @@ function selectApproach(linkId) {
 
 const renderer = new NetworkCanvas($('network-canvas'), selectApproach);
 
+const clockText = seconds => `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
+let liveChartKey = '';
+let eventsKey = '';
+
+// Queue on the selected approach over the run so far, with persistent-queue spans shaded.
+function refreshLiveChart() {
+  const values = simulation.series.queues[selectedLink];
+  const key = `${selectedLink}:${values?.length}:${simulation.events.length}`;
+  if (!values || key === liveChartKey) return;
+  liveChartKey = key;
+  const container = $('live-chart');
+  if (values.length < 2) { container.replaceChildren(); container.textContent = 'The chart starts after the first 20 simulated seconds.'; return; }
+  const bands = simulation.events.filter(e => e.link === selectedLink).map(e => ({ start: e.start, end: e.end ?? simulation.time }));
+  lineChart(container, { title: `${simulation.links[selectedLink].label} queue`, unit: 'm', time: simulation.series.time, compact: true,
+    series: [{ name: simulation.links[selectedLink].label, values }], bands });
+}
+
+function refreshQueueEvents() {
+  const events = simulation.events;
+  const key = events.map(e => `${e.link}${e.start}${e.end}${e.cycles}`).join('|');
+  if (key === eventsKey) return;
+  eventsKey = key;
+  const list = $('queue-events');
+  if (!events.length) { list.innerHTML = '<p class="subtle">None yet. A queue becomes persistent when vehicles waiting at the start of green are still there at its end, two cycles running.</p>'; return; }
+  const ordered = [...events].sort((a, b) => (a.end === null) - (b.end === null) || b.start - a.start).reverse();
+  list.innerHTML = `<ul>${ordered.map(e => `<li><button type="button" data-event-link="${esc(e.link)}"><strong>${esc(e.label.replace(' approach', ''))}</strong><span>${e.end === null ? `since ${clockText(e.start)} · ongoing` : `${clockText(e.start)}–${clockText(e.end)}`}${e.cycles ? ` · ${e.cycles} ${simulation.network.nodeById[simulation.links[e.link].to].control === 'priority' ? 'minutes' : 'cycles'} not cleared` : ''} · up to ${format(e.maxQueue, 0)} m</span></button></li>`).join('')}</ul>`;
+}
+
+function refreshTimeline() {
+  const duration = simulation.scenario.run.duration;
+  $('timeline-markers').innerHTML = simulation.events.map(e => `<span style="left:${e.start / duration * 100}%;width:${Math.max(0.5, ((e.end ?? simulation.time) - e.start) / duration * 100)}%" title="${esc(e.label)}: persistent queue"></span>`).join('');
+}
+
 function refreshMetrics() {
   if (!simulation) return;
   const r = simulation.result();
@@ -170,6 +216,7 @@ function refreshMetrics() {
   $('simulation-time').textContent = `${clock(simulation.time)} / ${clock(simulation.scenario.run.duration)}`;
   const percent = simulation.time / simulation.scenario.run.duration * 100;
   $('timeline-fill').style.width = `${percent}%`;
+  refreshTimeline();
   document.querySelector('.timeline').setAttribute('aria-valuenow', String(Math.round(percent)));
   if (nodes.length) {
     const label = nodes.map(n => `${nodes.length > 1 ? `${n.id}: ` : ''}${phaseText(phases[n.id])}`).join(' · ');
@@ -184,6 +231,8 @@ function refreshMetrics() {
   const link = simulation.links[selectedLink];
   $('approach-title').textContent = link ? link.label : '';
   $('diagnostic-list').innerHTML = explainApproach(simulation, selectedLink).map(d => `<div class="diagnostic"><h4>${esc(d.title)}</h4><p>${esc(d.detail)}</p></div>`).join('');
+  refreshLiveChart();
+  refreshQueueEvents();
 }
 
 function refreshWarnings() {
@@ -223,8 +272,30 @@ $('settings-form').addEventListener('click', event => {
   delete active().approaches[editingApproach];
   renderSettings(); inputsChanged();
 });
+$('queue-events').addEventListener('click', event => {
+  const button = event.target.closest('[data-event-link]');
+  if (button) selectApproach(button.dataset.eventLink);
+});
 $('settings-form').addEventListener('input', event => {
-  const { override, junction, group, junctionToggle } = event.target.dataset;
+  const { override, junction, group, junctionToggle, profile: profileField } = event.target.dataset;
+  if (profileField) {
+    const demand = active().demand;
+    if (profileField === 'preset') {
+      demand.profile = event.target.value === 'custom' ? { ...demand.profile, preset: 'custom' } : profilePreset(event.target.value, active().run.duration);
+      renderSettings();
+    } else if (profileField === 'period') {
+      demand.profile = { ...demand.profile, preset: 'custom', period: event.target.value === '' ? NaN : Math.round(Number(event.target.value) * 60) };
+    } else {
+      const factors = event.target.value.split(/[,\s]+/).filter(Boolean).map(Number);
+      demand.profile = { ...demand.profile, preset: 'custom', factors };
+    }
+    if (profileField !== 'preset') {
+      const select = document.querySelector('[data-profile="preset"]');
+      if (select) select.value = 'custom';
+    }
+    inputsChanged();
+    return;
+  }
   if (override) {
     const s = active();
     const own = { ...(s.approaches[editingApproach] ?? {}) };
@@ -328,6 +399,7 @@ $('import-file').addEventListener('change', async event => {
     project = imported; activeId = project.scenarios[0].id; results = [];
     $('results-table').textContent = 'Project opened. Re-run comparisons to generate verified local results.';
     $('results-chart').hidden = true;
+    $('time-charts').hidden = true;
     $('csv-button').disabled = true; $('report-button').disabled = true;
     renderSettings(); resetSimulation(); refreshWarnings(); persist();
     notice('Project opened. Imported results are not trusted; run scenarios again.', 'success');
@@ -357,6 +429,7 @@ function startExperiment(request, label) {
       results = data.results;
       stopExperiment();
       renderResults(results, $('results-table'), $('results-chart'));
+      renderTimeCharts(results, $('time-charts'));
       refreshWarnings();
       $('experiment-status').textContent = `${label} · ${results.length} alternatives · ${request.count} seeds each · illustrative`;
       $('csv-button').disabled = false; $('report-button').disabled = false;

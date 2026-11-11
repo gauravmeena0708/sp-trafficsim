@@ -1,12 +1,31 @@
 # Verification record
 
+## v0.4 demand profiles, time series and persistent queues — 11 November 2026
+
+- `npm test`: 33 passed (7 new in `test/demand-and-events.test.js`):
+  - a profile of equal factors reproduces constant-demand arrivals exactly;
+  - a mean-1 peak keeps the request count;
+  - a zero-factor period has no arrivals, and a 2× period's count lies within four Poisson standard deviations of expectation;
+  - the last factor holds after the profile ends;
+  - series sample every 10 s and end at the run totals;
+  - light demand gives no persistent-queue events, while east–west overload gives dated, two-cycle events on those approaches only;
+  - an over-capacity roundabout raises events and a light one does not;
+  - profile validation and model checks.
+- `npm run test:browser`: 12 passed in Chrome 157 (2 new):
+  - comparison time charts show a legend for both alternatives, a crosshair tooltip listing every series, a keyboard-readable plot (End reads 10:00) and a table view;
+  - the profile editor switches to custom on edit, flags a profile that adds demand, and blocks an out-of-range factor;
+  - a surge run draws the live queue chart, lists a persistent queue, selects its approach on click, and marks it on the timeline.
+- Screenshots of the comparison charts, the live inspector and the profile editor were reviewed.
+- The chart palette was validated with the dataviz checker on a white surface: all hard checks pass. Three slots are below 3:1 contrast, so the charts keep a legend, direct labels for up to four series, and a table view.
+- Default-scenario results are unchanged from v0.3: 391 completed trips with seed 42, because a constant profile uses the same draws.
+
 ## Browser checks — 11 November 2026
 
 `npm run test:browser` (`scripts/browser-checks.mjs`) runs against the built site in CI and locally. It passed 10/10 in Chrome 157 and Edge 157 on Windows, against both `dist/` and the source tree. It verifies:
 
 - **Keyboard.** Arrow, Home and End keys switch tabs. Enter starts a run and Space pauses it. Enter selects an approach. Enter opens the help dialog and Escape closes it. Tab reaches the project, tab, scenario and run controls in order, and the focused run button has a visible focus indicator.
 - **Accessible names.** Every button, text field, number field, select, checkbox, slider, tab and link in the accessibility tree has a name (design and compare views).
-- **Project files.** **Save project** downloads a schema 3 file that `parseProject` accepts. **Open project** applies an imported corridor scenario and discards fabricated results with a notice. An invalid file is rejected with an explanation and leaves the current project unchanged.
+- **Project files.** **Save project** downloads a current-schema file that `parseProject` accepts. **Open project** applies an imported corridor scenario and discards fabricated results with a notice. An invalid file is rejected with an explanation and leaves the current project unchanged.
 - **Export and print.** A two-scenario comparison exports a CSV with 6 per-seed rows, and a formula-like scenario name is neutralised. **Print report** calls `window.print` with complete report metadata. Under print media, the editing UI is hidden and the results table is shown.
 - **Touch and small screens.** At 390 × 844 with touch emulation, the page does not scroll horizontally, approach buttons are at least 24 px, tapping a button selects that approach, and tapping the map selects the nearest arm.
 - **No script errors** during any of the above.

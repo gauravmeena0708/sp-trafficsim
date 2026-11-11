@@ -18,6 +18,11 @@ export const percentile = (values, p) => {
   return sorted[Math.min(sorted.length - 1, Math.ceil(p * sorted.length) - 1)];
 };
 
+// Time-series sampling interval and persistent-queue rules.
+export const SAMPLE_SECONDS = 10;
+export const PRIORITY_WINDOW_SECONDS = 60;
+export const PERSIST_CYCLES = 2;
+
 export const QUEUE_SPEED = 2;
 export const QUEUE_SPACING = 10;
 // Queue: a chain of vehicles below QUEUE_SPEED starting at the stop line, where
@@ -70,7 +75,11 @@ export class Simulation {
       held: Array(link.lanes).fill(false),
       waiting: [], queue: 0, maxQueue: 0, queueSum: 0, samples: 0,
       blockedSeconds: 0, spillbackSeconds: 0, downstreamBlockedSeconds: 0, pocketOverflowSeconds: 0, pocketBlocked: false,
+      wasGreen: false, cycleTag: null, failures: 0, firstFailure: null, persistSince: null, openEvent: null,
     }]));
+    this.events = [];
+    this.series = { interval: SAMPLE_SECONDS, time: [], maxQueue: [], waiting: [], inNetwork: [], completed: [], requested: [],
+      queues: Object.fromEntries(this.network.links.filter(l => l.to).map(l => [l.id, []])) };
     // Downstream links first so space released this step can be used upstream.
     this.order = Object.values(this.links).sort((a, b) => (a.to ? 1 : 0) - (b.to ? 1 : 0) || a.index - b.index);
     this.entries = Object.values(this.links).filter(l => l.kind === 'entry').map(link => {
@@ -81,7 +90,7 @@ export class Simulation {
       link.random = randomGenerator(this.scenario.run.seed + n * 200003 + 101);
       link.routeRandom = randomGenerator(this.scenario.run.seed + n * 300007 + 211);
       link.arrival = arrival;
-      link.nextArrival = this.interarrival(link);
+      link.nextArrival = this.nextArrivalTime(link, 0);
       return link;
     });
   }
@@ -89,9 +98,32 @@ export class Simulation {
   // Backwards-compatible view of entry approaches keyed by link id.
   get approaches() { return Object.fromEntries(Object.values(this.links).filter(l => l.to).map(l => [l.id, l])); }
 
-  interarrival(link) {
-    const rate = this.scenario.demand[link.demandKey] * this.scenario.demand.multiplier / 3600;
-    return rate ? -Math.log(Math.max(1e-12, 1 - link.arrival())) / rate : Infinity;
+  // Arrival rate (veh/s) on an entry at time t: base demand × multiplier × the
+  // profile factor for that period. The last factor holds after the profile ends.
+  rateAt(link, t) {
+    const { period, factors } = this.scenario.demand.profile;
+    const index = Math.min(factors.length - 1, Math.floor(t / period + 1e-9));
+    return this.scenario.demand[link.demandKey] * this.scenario.demand.multiplier * factors[index] / 3600;
+  }
+
+  // Next arrival of a piecewise-constant Poisson process after `from`: one unit
+  // exponential draw is spent across profile periods. With a flat profile this
+  // reduces to an ordinary exponential interarrival, so the same draws are used.
+  nextArrivalTime(link, from) {
+    const { period, factors } = this.scenario.demand.profile;
+    let remaining = -Math.log(Math.max(1e-12, 1 - link.arrival()));
+    let t = from;
+    for (let guard = 0; guard < 100000; guard++) {
+      const index = Math.floor(t / period + 1e-9);
+      const last = index >= factors.length - 1;
+      const rate = this.rateAt(link, t);
+      const boundary = last ? Infinity : (index + 1) * period;
+      if (rate > 0 && rate * (boundary - t) >= remaining) return t + remaining / rate;
+      if (last) return Infinity;
+      remaining -= rate * (boundary - t);
+      t = boundary;
+    }
+    return Infinity;
   }
 
   makeVehicle(linkId, departure) {
@@ -312,6 +344,7 @@ export class Simulation {
     for (const v of toPocket) { v.lane = pocket.lane; link.lanes[pocket.lane].push(v); }
     if (!link.to) return;
     link.queue = queueExtent(link);
+    this.trackPersistence(link, now);
     if (now >= run.warmup) {
       link.maxQueue = Math.max(link.maxQueue, link.queue);
       link.queueSum += link.queue;
@@ -327,7 +360,7 @@ export class Simulation {
     while (link.nextArrival <= now + 1e-9) {
       link.waiting.push(this.makeVehicle(link.id, link.nextArrival));
       this.requested++;
-      link.nextArrival += this.interarrival(link);
+      link.nextArrival = this.nextArrivalTime(link, link.nextArrival);
     }
     while (link.waiting.length) {
       const vehicle = link.waiting[0];
@@ -356,6 +389,87 @@ export class Simulation {
     for (const link of this.order) this.moveLink(link, now);
     this.ticks++;
     this.time = Math.min(this.scenario.run.duration, this.ticks * STEP);
+    if (this.ticks % Math.round(SAMPLE_SECONDS / STEP) === 0) this.sample();
+  }
+
+  sample() {
+    const s = this.series;
+    s.time.push(+this.time.toFixed(1));
+    let max = 0;
+    for (const [id, values] of Object.entries(s.queues)) { const q = this.links[id].queue; values.push(+q.toFixed(1)); max = Math.max(max, q); }
+    s.maxQueue.push(+max.toFixed(1));
+    s.waiting.push(this.entries.reduce((n, l) => n + l.waiting.length, 0));
+    s.inNetwork.push(this.vehiclesOnLinks() + this.crossing.length);
+    s.completed.push(this.completed);
+    s.requested.push(this.requested);
+  }
+
+  // Persistent queues. At signals, the vehicles queued when green starts are
+  // tagged; if any is still on the approach when green ends, that cycle failed
+  // to clear. PERSIST_CYCLES consecutive failures open an event, dated from the
+  // first failing green; a cycle that clears closes it. Priority (roundabout)
+  // links have no cycles, so fixed PRIORITY_WINDOW_SECONDS windows stand in for
+  // them: vehicles queued at a window's start that are still on the link at its
+  // end make that window a failure.
+  trackPersistence(link, now) {
+    const node = this.network.nodeById[link.to];
+    if (link.openEvent) link.openEvent.maxQueue = Math.max(link.openEvent.maxQueue, link.queue);
+    if (node.control === 'priority') {
+      const boundary = Math.abs(now / PRIORITY_WINDOW_SECONDS - Math.round(now / PRIORITY_WINDOW_SECONDS)) < 1e-6;
+      if (boundary) { this.endCycle(link, now); this.startCycle(link, now); }
+      return;
+    }
+    const green = this.nodeGreen(link, now);
+    if (green && !link.wasGreen) this.startCycle(link, now);
+    if (!green && link.wasGreen) this.endCycle(link, now);
+    link.wasGreen = green;
+  }
+
+  startCycle(link, now) {
+    // Tags are unique per link and start time, so a tagged vehicle that moves on
+    // to another link is never mistaken for that link's residual queue.
+    link.cycleTag = `${link.id}@${now.toFixed(1)}`;
+    link.cycleStart = now;
+    // Only vehicles actually waiting in a queue are tagged: slow, with the stop
+    // line or the vehicle ahead within QUEUE_SPACING. A vehicle that has just
+    // entered at rest far upstream is not part of the queue.
+    for (const lane of link.lanes) {
+      lane.forEach((v, i) => {
+        const room = i === 0 ? link.length - v.position : lane[i - 1].position - lane[i - 1].length - v.position;
+        if (v.speed < QUEUE_SPEED && room <= QUEUE_SPACING) v.queueTag = link.cycleTag;
+      });
+    }
+  }
+
+  endCycle(link, now) {
+    if (link.cycleTag === null) return;
+    const remaining = link.lanes.some(lane => lane.some(v => v.queueTag === link.cycleTag));
+    if (remaining) {
+      link.failures++;
+      if (link.failures === 1) link.firstFailure = link.cycleStart;
+      if (link.openEvent) link.openEvent.cycles = link.failures;
+      else if (link.failures >= PERSIST_CYCLES) this.openEvent(link, link.firstFailure, link.failures);
+    } else {
+      link.failures = 0;
+      this.closeEvent(link, now);
+    }
+  }
+
+  openEvent(link, start, cycles) {
+    link.openEvent = { link: link.id, label: link.label, start, end: null, cycles, maxQueue: link.queue };
+    this.events.push(link.openEvent);
+  }
+
+  closeEvent(link, now) {
+    if (!link.openEvent) return;
+    link.openEvent.end = now;
+    link.openEvent = null;
+  }
+
+  // Seconds of persistent queueing inside the measurement window, summed over links.
+  persistentQueueSeconds() {
+    const { warmup } = this.scenario.run;
+    return this.events.reduce((sum, e) => sum + Math.max(0, (e.end ?? this.time) - Math.max(e.start, warmup)), 0);
   }
 
   get done() { return this.time >= this.scenario.run.duration; }
@@ -394,6 +508,11 @@ export class Simulation {
       accruedDelayPerPerson: this.measuredPeople ? this.personDelay / this.measuredPeople : null,
       maxQueue: Math.max(0, ...Object.values(queues).map(q => q.max)), queues,
       exitCounts: { ...this.exitCounts },
+      queueEvents: this.events.map(e => ({ ...e })),
+      persistentQueueSeconds: this.persistentQueueSeconds(),
+      unresolvedQueues: this.events.filter(e => e.end === null).length,
+      series: { interval: this.series.interval, time: [...this.series.time], maxQueue: [...this.series.maxQueue], waiting: [...this.series.waiting],
+        inNetwork: [...this.series.inNetwork], completed: [...this.series.completed], requested: [...this.series.requested] },
       spillbackSeconds: Object.values(queues).reduce((n, q) => n + q.spillbackSeconds, 0),
     };
   }

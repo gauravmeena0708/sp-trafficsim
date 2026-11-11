@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
-import { parseProject } from '../src/model/project.js';
+import { parseProject, SCHEMA_VERSION } from '../src/model/project.js';
 
 const args = process.argv.slice(2);
 const option = name => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
@@ -134,6 +134,13 @@ async function nextDownload(previous, timeout = 15000) {
   }
   throw new Error('Timed out waiting for a download.');
 }
+// Optional screenshots for visual review: --screenshots <dir>.
+const shotDir = option('--screenshots');
+const screenshot = async name => {
+  if (!shotDir) return;
+  const { data } = await page.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+  writeFileSync(join(shotDir, `${name}.png`), Buffer.from(data, 'base64'));
+};
 const listDownloads = () => existsSync(downloads) ? readdirSync(downloads) : [];
 async function load() {
   await setViewport(1440, 1000);
@@ -208,7 +215,7 @@ await check('Save project downloads a valid, re-importable project file', async 
   savedProjectPath = await nextDownload(before);
   assert(savedProjectPath.endsWith('.json'), `unexpected file ${savedProjectPath}`);
   const project = parseProject(readFileSync(savedProjectPath, 'utf8'));
-  assert(project.schemaVersion === 3 && project.scenarios.length === 1, 'downloaded project did not round-trip');
+  assert(project.schemaVersion === SCHEMA_VERSION && project.scenarios.length === 1, 'downloaded project did not round-trip');
 });
 
 await check('Open project imports a file, applies it, and discards imported results', async () => {
@@ -258,6 +265,47 @@ await check('comparison exports a safe per-seed CSV and a printable report', asy
   await page.send('Emulation.setEmulatedMedia', { media: '' });
   assert(printLayout.design === 'none' && printLayout.header === 'none', 'print layout shows editing controls');
   assert(printLayout.table > 0, 'results table not visible when printing');
+});
+
+await check('comparison time charts show a legend, a crosshair tooltip and a table view', async () => {
+  assert(await evaluate(`!document.getElementById('time-charts').hidden`), 'time charts hidden after a comparison');
+  assert(await evaluate(`document.querySelectorAll('#time-charts svg').length === 2`), 'expected two time charts');
+  assert(await evaluate(`document.querySelectorAll('#time-charts .line-chart')[0].querySelectorAll('.chart-legend span').length === 2`), 'legend should list both alternatives');
+  const box = await evaluate(`(() => { const svg = document.querySelector('#time-charts svg'); svg.scrollIntoView({ block: 'center' }); const r = svg.getBoundingClientRect(); return { x: r.x + r.width * 0.5, y: r.y + r.height * 0.5 }; })()`);
+  await wait(100);
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: box.x, y: box.y });
+  await waitFor(`!document.querySelector('#time-charts .chart-tooltip').hidden`, 'tooltip appears on hover');
+  assert(await evaluate(`document.querySelector('#time-charts .chart-tooltip').querySelectorAll('strong').length === 2`), 'tooltip should list every series');
+  assert(await evaluate(`document.querySelector('#time-charts .chart-table tbody tr') !== null`), 'table view has no rows');
+  // Keyboard reading: focus the plot and step with the arrow keys.
+  await evaluate(`document.querySelector('#time-charts svg rect[tabindex]').focus()`);
+  await key('End', 'End', 35);
+  assert(await evaluate(`document.querySelector('#time-charts .chart-tooltip-time').textContent === '10:00'`), 'End should read the last sample');
+  await screenshot('time-charts');
+});
+
+await check('demand profile editor, live queue chart and persistent-queue list', async () => {
+  await evaluate(`document.getElementById('tab-design').click()`);
+  await evaluate(`(() => { const el = document.querySelector('[data-profile="preset"]'); el.value = 'surge'; el.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  assert(await evaluate(`document.querySelectorAll('.profile-preview span').length === 6`), 'surge preset should show six periods');
+  await evaluate(`(() => { const el = document.querySelector('[data-profile="factors"]'); el.value = '1, 2.5'; el.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  assert(await evaluate(`document.querySelector('[data-profile="preset"]').value === 'custom'`), 'editing factors should switch to custom');
+  assert(await evaluate(`[...document.querySelectorAll('#model-checks li')].some(li => /more demand overall/.test(li.textContent))`), 'missing check for a profile that adds demand');
+  await evaluate(`(() => { const el = document.querySelector('[data-profile="factors"]'); el.value = '1, 9'; el.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  assert(await evaluate(`document.getElementById('play-button').disabled && /between 0 and 3/.test(document.getElementById('validation').textContent)`), 'an out-of-range factor should block the run');
+  await evaluate(`(() => { const el = document.querySelector('[data-profile="factors"]'); el.value = '1, 2.5'; el.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await evaluate(`document.getElementById('speed-select').value = '32'; document.getElementById('play-button').click()`);
+  await waitFor(`document.querySelector('#live-chart svg') !== null`, 'live queue chart draws', 30000);
+  await waitFor(`document.querySelectorAll('#queue-events button').length > 0`, 'surge produces a persistent queue event', 60000);
+  await evaluate(`document.getElementById('play-button').click()`);
+  const target = await evaluate(`document.querySelector('#queue-events button').dataset.eventLink`);
+  await evaluate(`document.querySelector('#queue-events button').click()`);
+  assert(await evaluate(`document.querySelector('[data-link="${target}"]').getAttribute('aria-pressed') === 'true'`), 'clicking an event should select its approach');
+  assert(await evaluate(`document.querySelectorAll('#timeline-markers span').length > 0`), 'timeline should mark persistent queues');
+  await evaluate(`document.getElementById('live-chart').scrollIntoView({ block: 'center' })`);
+  await screenshot('live-insights');
+  await evaluate(`document.querySelector('.profile-preview').scrollIntoView({ block: 'center' })`);
+  await screenshot('profile-editor');
 });
 
 await check('phone-sized touch layout has no horizontal scrolling and taps select approaches', async () => {

@@ -1,8 +1,12 @@
-# Model v0.3: assumptions and interpretation
+# Model v0.4: assumptions and interpretation
 
 **Status: illustrative. No field calibration or independent validation has been performed.**
 
-Engine identifier: `illustrative-network/0.3.0`. Project schema version 3. Older projects are migrated on import: schema 1 becomes a straight-through four-arm junction, and schema 2 gains empty per-approach and per-junction settings.
+Engine identifier: `illustrative-network/0.4.0`. Project schema version 4. Older projects are migrated on import:
+
+- schema 1 becomes a straight-through four-arm junction;
+- schema 2 gains empty per-approach and per-junction settings;
+- schema 3 gains a constant demand profile.
 
 ## Network
 
@@ -60,7 +64,11 @@ Two fixed-time groups alternate: east–west, then north–south. On the T-junct
 
 ## Arrivals and comparison
 
-Demand at each boundary approach is a Poisson process: the arm's vehicles/hour times the demand multiplier. On the corridor, the north and south values apply to each junction's side road. Separate seeded streams generate arrival times, vehicle attributes and route draws per boundary approach, so paired seeds keep arrivals and the fleet identical across timing, turning-share and geometry alternatives. Every vehicle uses exactly two route draws, so changing turning shares changes routes but not the arrival times or vehicle types. Vehicle shares must total 100%.
+Demand at each boundary approach is a Poisson process whose rate is the arm's vehicles/hour × the demand multiplier × the **demand profile** factor for the current period.
+
+The profile is a list of 1–48 factors (0–3) with a period of 1–60 minutes, shared by every approach. The last factor holds after the profile ends. Presets (constant, mid-run peak, short surge, steadily rising) are written out as explicit factors spanning the run in six periods, so a saved scenario reproduces exactly.
+
+Arrivals use the cumulative-intensity method: each arrival spends one unit exponential draw across the periods. A constant profile therefore gives exactly the v0.3 arrivals. A profile whose factors average 1 over the run gives the same number of requests, redistributed in time. The model checks note profiles that add or remove demand overall. On the corridor, the north and south values apply to each junction's side road. Separate seeded streams generate arrival times, vehicle attributes and route draws per boundary approach, so paired seeds keep arrivals and the fleet identical across timing, turning-share and geometry alternatives. Every vehicle uses exactly two route draws, so changing turning shares changes routes but not the arrival times or vehicle types. Vehicle shares must total 100%.
 
 Physics uses 0.2-second steps; playback speed changes wall-clock execution only. Replication *i* uses seed `base + i`.
 
@@ -78,6 +86,12 @@ Physics uses 0.2-second steps; playback speed changes wall-clock execution only.
 - **Entry-blocked seconds:** post-warm-up time with vehicles waiting outside a boundary approach.
 - **Spillback seconds:** post-warm-up time with a corridor link's queue within 15 m of its upstream junction.
 - **Downstream-blocked seconds:** post-warm-up time when a stop-line vehicle had green but its receiving lane was queued (storage exhausted, not merely spacing behind a departing vehicle).
+- **Persistent queues (cycle failures).** When an approach's green starts, every vehicle then waiting in its queue is tagged: slower than 2 m/s, with the stop line or the vehicle ahead within 10 m. A vehicle that has just entered at rest far upstream is not tagged. If any tagged vehicle is still on the approach when that green ends, the cycle *failed to clear*.
+  - Two consecutive failures open a persistent queue event, dated from the first failing green. The first cycle that clears closes it.
+  - Roundabout links have no cycles, so consecutive 60-second windows stand in for them.
+  - **Persistent queue time** is the event time inside the measurement window, summed over approaches (reported in link-minutes). **Unresolved at end** counts events still open at the run horizon: queues that had not cleared when the run stopped.
+  - This separates normal stopping at red, which clears each cycle, from congestion that carries over. It does not say why a queue persists; see the inspector's contributor descriptions.
+- **Time series** are sampled every 10 simulated seconds: each approach's queue, the longest approach queue, vehicles waiting to enter, vehicles in the network, and cumulative requested and completed trips. Comparisons store the mean across seeds at each sample, not each seed's series.
 - Completed-trip mean and p95 journey times use vehicles requested after warm-up and completed by the horizon. They include entry waiting and are biased towards completed trips; read them with completion and unfinished counts.
 - **Accrued delay** integrates `max(0, 1 − speed / desiredSpeed)` over time for post-warm-up requests, including waiting outside and time in junctions, divided by those requests (including unfinished trips). Person delay weights by disclosed fixed class occupancies. It is delay accrued to the run horizon, not eventual total trip delay.
 - **Boundary accounting** covers the whole run: `requested = completed + inNetwork + waitingOutside`, and `admitted = completed + inNetwork`. Both are checked at every step in tests.

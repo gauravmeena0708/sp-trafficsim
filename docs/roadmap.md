@@ -49,10 +49,11 @@ The full Phase 1 in the product plan is large. Deliver it in this order, so each
 
 ### Then: richer studies
 
-- [ ] Time-varying demand profiles.
-- [ ] Persistent queue events across cycles; event timeline.
+- [x] Time-varying demand profiles (shared by all approaches; per-approach profiles not yet).
+- [x] Persistent queue events across cycles, marked on the run timeline and listed in the inspector. (Seeking to an event needs replay, below.)
 - [ ] Precision-based additional replications.
-- [ ] Time-series charts and change summaries in comparisons.
+- [x] Time-series charts in comparisons (longest queue, waiting demand) and a live per-approach queue chart.
+- [ ] Change summaries between alternatives.
 - [ ] Undo/redo, baseline locking, autosave recovery.
 
 ### Then: navigable 3D

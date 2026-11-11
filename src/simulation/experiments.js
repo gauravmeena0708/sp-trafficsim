@@ -63,6 +63,7 @@ export const DIFFERENCE_METRICS = {
   maxQueue: 'Max queue (m)',
   waiting: 'Waiting outside',
   completed: 'Completed trips',
+  persistentQueueSeconds: 'Persistent queue time (s)',
 };
 
 // Attach paired differences against the first result. Pairing is only claimed when
@@ -97,18 +98,32 @@ export function sweepFindings(results) {
 
 export function runReplications(scenario, count = 3) {
   if (!Number.isInteger(count) || count < 1 || count > 10) throw new Error('Use 1–10 replications.');
-  const runs = Array.from({ length: count }, (_, i) => {
+  const full = Array.from({ length: count }, (_, i) => {
     const copy = structuredClone(scenario);
     copy.run.seed += i;
     return new Simulation(copy).runToEnd();
   });
-  return { name: scenario.name, scenarioId: scenario.id, inputs: structuredClone(scenario), runs,
+  // Keep the per-seed time series out of stored runs; the mean across seeds is
+  // kept once per alternative so results and project files stay small.
+  const series = meanSeries(full.map(r => r.series));
+  const runs = full.map(({ series: _series, ...rest }) => rest);
+  return { name: scenario.name, scenarioId: scenario.id, inputs: structuredClone(scenario), runs, series,
     delay: summarize(runs.map(r => r.accruedDelayPerRequest)),
     journey: summarize(runs.map(r => r.meanJourney)),
     queue: summarize(runs.map(r => r.maxQueue)),
     waiting: summarize(runs.map(r => r.waiting)),
     completed: summarize(runs.map(r => r.completed)),
+    persistent: summarize(runs.map(r => r.persistentQueueSeconds)),
+    unresolved: summarize(runs.map(r => r.unresolvedQueues)),
   };
+}
+
+// Mean across seeds at each sample time (all runs share the same sample times).
+export function meanSeries(list) {
+  if (!list.length) return null;
+  const mean = key => list[0][key].map((_, i) => list.reduce((s, x) => s + x[key][i], 0) / list.length);
+  return { interval: list[0].interval, time: [...list[0].time], seeds: list.length,
+    maxQueue: mean('maxQueue'), waiting: mean('waiting'), inNetwork: mean('inNetwork') };
 }
 
 export function runSweep(scenario, request, onProgress = () => {}) {
