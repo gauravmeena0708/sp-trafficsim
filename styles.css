@@ -601,13 +601,15 @@ canvas{
 .approach-buttons{
   display:flex;
   gap:7px;
+  flex-wrap:wrap;
   margin:15px 0
 }
 .approach-buttons button{
   border:1px solid var(--border);
   background:white;
   border-radius:5px;
-  width:32px;
+  min-width:32px;
+  padding:0 9px;
   height:29px;
   font-size:10px;
   color:#7f8d76
@@ -1087,4 +1089,25 @@ dialog p{
     font-size:9px;
     line-height:1.7
   }
+}
+.experiment-card label.checkbox-field{
+  flex-direction:row;
+  align-items:center;
+  gap:8px;
+  margin:10px 0
+}
+.experiment-card > label + label,.experiment-card > label + .sweep-fields{
+  margin-top:10px
+}
+.sweep-findings{
+  padding:14px 16px;
+  border-top:1px solid var(--border);
+  font-size:12px;
+  white-space:normal
+}
+.sweep-findings h4{
+  margin-bottom:6px
+}
+.sweep-findings ul{
+  margin:0 0 8px 18px
 }

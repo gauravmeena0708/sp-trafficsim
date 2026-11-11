@@ -1,22 +1,24 @@
 import { createProject, validateScenario, parseProject, DIRECTIONS, FLEET } from './model/project.js';
 import { Simulation, STEP } from './simulation/engine.js';
 import { cycleLength } from './simulation/signals.js';
-import { timingCandidates } from './simulation/experiments.js';
+import { TEMPLATES, inboundLinks } from './model/network.js';
+import { DEMAND_LEVELS, SWEEP_GROUPS, sweepConfigurations } from './simulation/experiments.js';
 import { explainApproach } from './diagnostics/explain.js';
 import { NetworkCanvas } from './ui/canvas.js';
 import { escapeHTML as esc, format, download, renderResults, comparisonWarnings, resultsAreStale, csvReport, printMetadata } from './ui/reports.js';
 
 const $ = id => document.getElementById(id);
-const STORAGE_KEY = 'junction.project.v1';
+const STORAGE_KEY = 'junction.project.v2';
+const LEGACY_STORAGE_KEY = 'junction.project.v1';
 let project = createProject();
 try {
-  const stored = localStorage.getItem(STORAGE_KEY);
+  const stored = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY);
   if (stored) project = parseProject(stored);
 } catch { /* A damaged or unavailable local store does not prevent a fresh study. */ }
 let activeId = project.scenarios[0].id;
 let simulation;
 let playing = false;
-let selectedDirection = 'west';
+let selectedLink = 'west';
 let accumulator = 0;
 let lastFrame = performance.now();
 let lastMetrics = 0;
@@ -49,21 +51,26 @@ function rangeField(label, path, min, max, unit) {
 }
 
 function renderSettings() {
+  const corridor = active().template === 'corridor';
   $('scenario-select').innerHTML = project.scenarios.map((s, i) => `<option value="${esc(s.id)}" ${s.id === activeId ? 'selected' : ''}>${String(i + 1).padStart(2, '0')} / ${esc(s.name)}</option>`).join('');
   $('settings-form').innerHTML = `
     <label class="field">Scenario name<input type="text" data-path="name" value="${esc(active().name)}" maxlength="80"></label>
     <section class="settings-section"><div class="section-title"><h3>Road layout</h3><span class="section-number">01</span></div>
+      <label class="field">Layout template<select data-path="template">${Object.entries(TEMPLATES).map(([key, label]) => `<option value="${key}" ${active().template === key ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></label>
       ${rangeField('Approach length (m)', 'geometry.length', 100, 600, 'metres')}
-      <div class="input-grid">${numberField('Lanes / direction', 'geometry.lanes', 1, 3)}${numberField('Speed limit (km/h)', 'geometry.speed', 20, 80)}</div>
-      <p class="field-hint">Shared dimensions across all four arms. Straight-through routes only.</p>
+      <div class="input-grid">${numberField('Lanes / direction', 'geometry.lanes', 1, 3)}${numberField('Speed limit (km/h)', 'geometry.speed', 20, 80)}${corridor ? numberField('Link A–B length (m)', 'geometry.spacing', 60, 600) : ''}</div>
+      <p class="field-hint">Shared dimensions on every road.${corridor ? ' The link between junctions has finite storage: when it fills, junction A cannot release traffic into it.' : ''} Left turns use the kerbside lane and right turns the median lane; there are no mid-block lane changes.</p>
     </section>
     <section class="settings-section"><div class="section-title"><h3>Signal timings</h3><span class="section-number">02</span></div>
       ${rangeField('East–west green (s)', 'signals.eastWest', 5, 300, 'seconds')}
       ${rangeField('North–south green (s)', 'signals.northSouth', 5, 300, 'seconds')}
-      <div class="input-grid">${numberField('Yellow / phase (s)', 'signals.yellow', 3, 10)}${numberField('All-red / phase (s)', 'signals.allRed', 2, 10)}</div>
-      <p class="field-hint">Fixed-time, two-phase signals. Transition intervals remain separate from green time.</p><div class="timing-summary"><span>Total cycle</span><strong id="settings-cycle">${cycleLength(active().signals)} seconds</strong></div>
+      <div class="input-grid">${numberField('Yellow / phase (s)', 'signals.yellow', 3, 10)}${numberField('All-red / phase (s)', 'signals.allRed', 2, 10)}${corridor ? numberField('Junction B offset (s)', 'signals.offset', 0, 600) : ''}</div>
+      <p class="field-hint">Fixed-time, two-phase signals${corridor ? ' shared by both junctions; the offset delays the start of junction B’s plan for coordination' : ''}. Transition intervals remain separate from green time. Right turns are permissive and yield to opposing traffic arriving within 4 seconds.</p><div class="timing-summary"><span>Total cycle</span><strong id="settings-cycle">${cycleLength(active().signals)} seconds</strong></div>
     </section>
-    <section class="settings-section"><div class="section-title"><h3>Traffic demand</h3><span class="section-number">03</span></div><div class="input-grid">${DIRECTIONS.map(d => numberField(`${d[0].toUpperCase() + d.slice(1)} (veh/h)`, `demand.${d}`, 0, 3600)).join('')}</div>
+    <section class="settings-section"><div class="section-title"><h3>Traffic demand</h3><span class="section-number">03</span></div><div class="input-grid">${DIRECTIONS.filter(d => !(d === 'north' && active().template === 'tJunction')).map(d => numberField(`${d[0].toUpperCase() + d.slice(1)} (veh/h)`, `demand.${d}`, 0, 3600)).join('')}</div>
+      ${corridor ? '<p class="field-hint">North and south values apply to each junction’s side road.</p>' : ''}
+      <div class="input-grid">${numberField('Left turn (%)', 'turning.left', 0, 100)}${numberField('Right turn (%)', 'turning.right', 0, 100)}</div>
+      <p class="field-hint">Turning shares apply at every junction; the remainder goes straight. Unavailable movements are dropped and the remaining shares rescaled.</p>
       <label class="field" style="margin-top:12px">Demand assumption<select data-path="demand.multiplier"><option value="0.75" ${active().demand.multiplier === .75 ? 'selected' : ''}>Low · 0.75×</option><option value="1" ${active().demand.multiplier === 1 ? 'selected' : ''}>Central · 1.00×</option><option value="1.25" ${active().demand.multiplier === 1.25 ? 'selected' : ''}>High · 1.25×</option>${![.75, 1, 1.25].includes(active().demand.multiplier) ? `<option selected value="${active().demand.multiplier}">Custom · ${active().demand.multiplier}×</option>` : ''}</select></label>
       <p class="field-hint">Growth sensitivity only. Population-to-trip estimation is planned.</p>
     </section>
@@ -83,14 +90,22 @@ function validate() {
 function resetSimulation() {
   playing = false;
   accumulator = 0;
-  if (validate()) simulation = new Simulation(active());
+  if (validate()) { simulation = new Simulation(active()); renderApproachButtons(); }
   refreshMetrics();
 }
 
-function selectApproach(direction) {
-  selectedDirection = direction;
-  renderer.selected = direction;
-  document.querySelectorAll('[data-direction]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.direction === direction)));
+function renderApproachButtons() {
+  if (!simulation) return;
+  const links = inboundLinks(simulation.network);
+  if (!links.some(l => l.id === selectedLink)) selectedLink = links[0].id;
+  $('approach-buttons').innerHTML = links.map(l => `<button data-link="${esc(l.id)}" aria-pressed="${l.id === selectedLink}">${esc(l.label.replace(' approach', ''))}</button>`).join('');
+  renderer.selected = selectedLink;
+}
+
+function selectApproach(linkId) {
+  selectedLink = linkId;
+  renderer.selected = linkId;
+  document.querySelectorAll('[data-link]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.link === linkId)));
   refreshMetrics();
 }
 
@@ -99,7 +114,9 @@ const renderer = new NetworkCanvas($('network-canvas'), selectApproach);
 function refreshMetrics() {
   if (!simulation) return;
   const r = simulation.result();
-  const phase = simulation.snapshot().phase;
+  const phases = simulation.phases();
+  const phaseText = phase => phase.group === 'all' ? 'all-red' : `${phase.group === 'eastWest' ? 'east–west' : 'north–south'} ${phase.colour}`;
+  const nodes = simulation.network.nodes;
   $('metric-completed').textContent = r.completed;
   $('metric-queue').innerHTML = `${format(r.maxQueue, 0)} <small>m</small>`;
   $('metric-requested').textContent = r.requested;
@@ -112,11 +129,13 @@ function refreshMetrics() {
   const percent = simulation.time / simulation.scenario.run.duration * 100;
   $('timeline-fill').style.width = `${percent}%`;
   document.querySelector('.timeline').setAttribute('aria-valuenow', String(Math.round(percent)));
-  $('phase-label').textContent = phase.group === 'all' ? 'All-red clearance' : `${phase.group === 'eastWest' ? 'East–west' : 'North–south'} ${phase.colour}`;
-  $('phase-countdown').textContent = `${Math.ceil(phase.remaining)}s remaining`;
+  const label = nodes.map(n => `${nodes.length > 1 ? `${n.id}: ` : ''}${phaseText(phases[n.id])}`).join(' · ');
+  $('phase-label').textContent = label[0].toUpperCase() + label.slice(1);
+  $('phase-countdown').textContent = nodes.map(n => `${Math.ceil(phases[n.id].remaining)}s`).join(' / ') + ' remaining';
   $('cycle-label').textContent = `Cycle: ${cycleLength(simulation.scenario.signals)}s`;
-  $('approach-title').textContent = `${selectedDirection[0].toUpperCase() + selectedDirection.slice(1)} approach`;
-  $('diagnostic-list').innerHTML = explainApproach(simulation, selectedDirection).map(d => `<div class="diagnostic"><h4>${esc(d.title)}</h4><p>${esc(d.detail)}</p></div>`).join('');
+  const link = simulation.links[selectedLink];
+  $('approach-title').textContent = link ? link.label : '';
+  $('diagnostic-list').innerHTML = explainApproach(simulation, selectedLink).map(d => `<div class="diagnostic"><h4>${esc(d.title)}</h4><p>${esc(d.detail)}</p></div>`).join('');
 }
 
 function refreshWarnings() {
@@ -131,11 +150,13 @@ $('settings-form').addEventListener('submit', event => event.preventDefault());
 $('settings-form').addEventListener('input', event => {
   const { path } = event.target.dataset;
   if (!path) return;
-  const value = path === 'name' ? event.target.value : event.target.value === '' ? NaN : Number(event.target.value);
+  const value = ['name', 'template'].includes(path) ? event.target.value : event.target.value === '' ? NaN : Number(event.target.value);
   write(active(), path, value);
   document.querySelectorAll('[data-path]').forEach(control => { if (control !== event.target && control.dataset.path === path) control.value = value; });
   if (path === 'name') {
     $('scenario-select').selectedOptions[0].textContent = active().name;
+  } else if (path === 'template') {
+    renderSettings(); resetSimulation();
   } else resetSimulation();
   const total = Object.keys(FLEET).reduce((sum, key) => sum + active().fleet[key], 0);
   $('fleet-total').textContent = `Total: ${format(total, 0)}% · shares must add up to 100`;
@@ -169,7 +190,7 @@ $('play-button').addEventListener('click', () => {
   notice(playing ? 'Simulation running. Metrics update live; completed trips exclude vehicles still travelling.' : 'Simulation paused.');
 });
 $('reset-button').addEventListener('click', () => { resetSimulation(); notice('Run reset with the same seed and inputs.'); });
-document.querySelectorAll('[data-direction]').forEach(button => button.addEventListener('click', () => selectApproach(button.dataset.direction)));
+$('approach-buttons').addEventListener('click', event => { const button = event.target.closest('[data-link]'); if (button) selectApproach(button.dataset.link); });
 
 function changeView(view) {
   if (view === 'compare') { playing = false; refreshMetrics(); }
@@ -251,9 +272,11 @@ $('compare-button').addEventListener('click', () => {
 });
 $('sweep-button').addEventListener('click', () => {
   const start = Number($('sweep-start').value), end = Number($('sweep-end').value), increment = Number($('sweep-step').value);
-  try { timingCandidates(start, end, increment); }
+  const group = $('sweep-group').value;
+  const multipliers = $('sweep-demand-levels').checked ? DEMAND_LEVELS.map(l => l.multiplier) : [active().demand.multiplier];
+  try { sweepConfigurations({ group, start, end, increment, multipliers }); }
   catch (error) { notice(error.message, 'error'); return; }
-  startExperiment({ type: 'sweep', scenario: structuredClone(active()), start, end, increment, count: Number($('replications').value) }, 'East–west timing sweep');
+  startExperiment({ type: 'sweep', scenario: structuredClone(active()), group, start, end, increment, multipliers, count: Number($('replications').value) }, `${SWEEP_GROUPS[group][0].toUpperCase() + SWEEP_GROUPS[group].slice(1)} timing sweep`);
 });
 $('cancel-button').addEventListener('click', () => { stopExperiment(); $('experiment-status').textContent = `${experimentLabel} cancelled. Any displayed results are from the previous completed experiment.`; notice('Experiment cancelled.'); });
 $('csv-button').addEventListener('click', () => download('junction-results.csv', csvReport(results), 'text/csv;charset=utf-8'));
@@ -282,5 +305,5 @@ function frame(now) {
 
 renderSettings();
 resetSimulation();
-selectApproach(selectedDirection);
+selectApproach(selectedLink);
 requestAnimationFrame(frame);

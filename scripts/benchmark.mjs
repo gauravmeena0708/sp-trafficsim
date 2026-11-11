@@ -3,20 +3,32 @@ import { cpus, platform } from 'node:os';
 import { createScenario, ENGINE_VERSION } from '../src/model/project.js';
 import { Simulation } from '../src/simulation/engine.js';
 
-const scenario = createScenario();
-new Simulation(scenario).runToEnd(); // Warm up the JS engine once.
-const trials = [];
-for (let i = 0; i < 5; i++) {
-  const input = structuredClone(scenario);
-  input.run.seed += i;
-  const start = performance.now();
-  const result = new Simulation(input).runToEnd();
-  trials.push({ seed: input.run.seed, milliseconds: +(performance.now() - start).toFixed(1), requested: result.requested, completed: result.completed, waiting: result.waiting });
+// Declared reference workloads. Keep these fixed so results stay comparable.
+const workloads = {
+  fourArmStraight: createScenario(),
+  corridorTurning: Object.assign(createScenario(), { template: 'corridor', turning: { left: 20, right: 15 } }),
+};
+
+const report = {};
+for (const [name, scenario] of Object.entries(workloads)) {
+  new Simulation(scenario).runToEnd(); // Warm up the JS engine once.
+  const trials = [];
+  for (let i = 0; i < 5; i++) {
+    const input = structuredClone(scenario);
+    input.run.seed += i;
+    const start = performance.now();
+    const result = new Simulation(input).runToEnd();
+    trials.push({ seed: input.run.seed, milliseconds: +(performance.now() - start).toFixed(1), requested: result.requested, completed: result.completed, waiting: result.waiting });
+  }
+  const sorted = trials.map(t => t.milliseconds).sort((a, b) => a - b);
+  report[name] = {
+    workload: { template: scenario.template, lanesEach: scenario.geometry.lanes, approachMetres: scenario.geometry.length,
+      linkMetres: scenario.template === 'corridor' ? scenario.geometry.spacing : null, demand: scenario.demand, turning: scenario.turning,
+      simulatedSeconds: scenario.run.duration, timeStepSeconds: 0.2 },
+    medianMilliseconds: sorted[2], trials,
+  };
 }
 console.log(JSON.stringify({
-  engine: ENGINE_VERSION, runtime: process.version, platform: platform(), cpu: cpus()[0]?.model,
-  workload: { approaches: 4, lanesEach: scenario.geometry.lanes, lengthMetres: scenario.geometry.length,
-    requestedVehiclesPerHour: 2500, simulatedSeconds: scenario.run.duration, timeStepSeconds: 0.2 },
-  trials,
+  engine: ENGINE_VERSION, runtime: process.version, platform: platform(), cpu: cpus()[0]?.model, report,
   note: 'Headless engine benchmark only; this does not measure browser rendering or establish model validity.',
 }, null, 2));
