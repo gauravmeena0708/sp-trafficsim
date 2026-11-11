@@ -1,5 +1,5 @@
 import { DIRECTIONS, ENGINE_VERSION, FLEET, fingerprint, validateScenario } from '../model/project.js';
-import { armGroup, chooseRoute, compileNetwork, junctionPath, laneForMovement, pathsConflict } from '../model/network.js';
+import { approachLane, armGroup, chooseRoute, compileNetwork, junctionPath, pathsConflict } from '../model/network.js';
 import { randomGenerator } from './random.js';
 import { groupGreen, signalState } from './signals.js';
 
@@ -7,7 +7,11 @@ export const STEP = 0.2;
 export const GAP = 2.5;
 const CRITICAL_GAP_SECONDS = 4;
 const GAP_ACCEPTANCE_RANGE = 60;
-const CROSSING_SPEED = { straight: 8, left: 5, right: 6 };
+const CROSSING_SPEED = { straight: 8, left: 5, right: 6, merge: 5, circulate: 6, diverge: 6 };
+// Roundabout entries yield to circulating vehicles within this time, and need
+// this much spare room on the circulating link beyond their own length.
+const MERGE_GAP_SECONDS = 3.5;
+const MERGE_BUFFER = 3;
 export const percentile = (values, p) => {
   if (!values.length) return null;
   const sorted = [...values].sort((a, b) => a - b);
@@ -36,8 +40,9 @@ export function queueExtent(link) {
 
 // Illustrative lane-based network model, deliberately isolated from the UI.
 // Vehicles follow declared routes over directed links. Junction entry requires a
-// green signal, no conflicting path in use, permissive gap acceptance for right
-// turns, and committed space on the receiving lane (no blocking the box).
+// green signal (or, at roundabouts, a gap in circulating traffic), no conflicting
+// path in use, permissive gap acceptance for right turns, and committed space on
+// the receiving lane (no blocking the box). Right-turn pockets have finite storage.
 // No mid-link lane changes, sublane filtering, bus dwell or pedestrian model.
 export class Simulation {
   constructor(scenario) {
@@ -64,7 +69,7 @@ export class Simulation {
       nextRelease: Array(link.lanes).fill(0),
       held: Array(link.lanes).fill(false),
       waiting: [], queue: 0, maxQueue: 0, queueSum: 0, samples: 0,
-      blockedSeconds: 0, spillbackSeconds: 0, downstreamBlockedSeconds: 0,
+      blockedSeconds: 0, spillbackSeconds: 0, downstreamBlockedSeconds: 0, pocketOverflowSeconds: 0, pocketBlocked: false,
     }]));
     // Downstream links first so space released this step can be used upstream.
     this.order = Object.values(this.links).sort((a, b) => (a.to ? 1 : 0) - (b.to ? 1 : 0) || a.index - b.index);
@@ -96,13 +101,15 @@ export class Simulation {
     let sum = 0;
     const type = Object.keys(FLEET).find(k => { sum += this.scenario.fleet[k]; return draw < sum; }) ?? 'car';
     const spec = FLEET[type];
-    const desired = this.scenario.geometry.speed / 3.6 * spec.speedFactor * (0.9 + random() * 0.2);
+    // Desired speed = link speed limit × class factor × individual variation.
+    const speedFactor = spec.speedFactor * (0.9 + random() * 0.2);
+    const desired = link.speed * speedFactor;
     // A fixed number of route draws keeps later vehicles' streams aligned.
     const draws = [link.routeRandom(), link.routeRandom()];
     const { route, moves } = chooseRoute(this.network, linkId, this.scenario.turning, draws);
     const measured = departure >= this.scenario.run.warmup;
     if (measured) { this.measuredRequested++; this.measuredPeople += spec.occupancy; }
-    return { id: ++this.nextId, entry: linkId, direction: link.demandKey, type, length: spec.length, desired, speed: 0,
+    return { id: ++this.nextId, entry: linkId, direction: link.demandKey, type, length: spec.length, desired, speedFactor, speed: 0,
       position: spec.length, departure, measured, lane: 0, occupancy: spec.occupancy, route, moves, leg: 0 };
   }
 
@@ -113,16 +120,18 @@ export class Simulation {
     this.personDelay += delay * vehicle.occupancy;
   }
 
-  // Lane on `link` for a vehicle that will make movement `moves[leg]` at its end.
+  // Lane a vehicle takes at the start of `link` for movement `moves[leg]` at its end.
   laneOn(link, vehicle, leg, fallback) {
     const definition = this.network.byId[link.id];
-    const lane = laneForMovement(definition, vehicle.moves[leg]);
-    return lane ?? Math.min(definition.lanes - 1, Math.max(0, fallback));
+    const lane = approachLane(definition, vehicle.moves[leg]);
+    return lane ?? Math.min(definition.throughLanes - 1, Math.max(0, fallback));
   }
 
+  // Priority (roundabout) junctions have no signal; entry is governed by yielding.
   nodeGreen(link, time) {
     const node = this.network.nodeById[link.to];
-    return groupGreen(this.scenario.signals, time, armGroup(link.toArm), node.offset);
+    if (node.control === 'priority') return true;
+    return groupGreen(node.plan, time, armGroup(link.toArm), node.offset);
   }
 
   // Free length at the start of a lane after vehicles already committed to it.
@@ -144,18 +153,44 @@ export class Simulation {
     if (!this.nodeGreen(link, now)) return 'signal';
     if (now < link.nextRelease[laneIndex]) return 'headway';
     const path = this.plannedPath(vehicle, link, laneIndex);
+    const priority = this.network.nodeById[link.to].control === 'priority';
     for (const other of this.crossing) {
       if (other.path.key === path.key) { if (other.progress - other.length - GAP < 0) return 'headway'; }
+      else if (priority && this.convergesBehind(path, other)) continue;
       else if (pathsConflict(this.network, path, other.path)) return 'conflict';
     }
-    if (this.receivingRoom(this.links[path.to], path.toLane) < vehicle.length) {
+    const buffer = path.movement === 'merge' ? MERGE_BUFFER : 0;
+    if (this.receivingRoom(this.links[path.to], path.toLane) < vehicle.length + buffer) {
       // Distinguish a queued receiving lane (storage exhausted) from spacing
       // behind a vehicle that is still moving away.
       const tail = this.links[path.to].lanes[path.toLane].at(-1);
       return tail && tail.speed < QUEUE_SPEED ? 'downstream' : 'spacing';
     }
     if (path.movement === 'right' && this.opposingWithinGap(path, link, now)) return 'yield';
+    if (path.movement === 'merge' && this.circulatingWithinGap(link)) return 'yield';
     return null;
+  }
+
+  // At roundabout nodes, entering and circulating paths only converge into one
+  // lane. A vehicle may start behind one already in the junction if, at its own
+  // speed cap, it reaches the shared lane at least a vehicle length plus gap
+  // later, with a 25% margin for speed differences.
+  convergesBehind(path, other) {
+    if (path.to !== other.path.to || path.toLane !== other.path.toLane) return false;
+    const remaining = other.path.length - other.progress;
+    return path.length >= (remaining + other.length + GAP) * 1.25;
+  }
+
+  // Roundabout entries give way to every circulating vehicle arriving within the
+  // critical gap: entering drivers are not assumed to know who will exit.
+  circulatingWithinGap(link) {
+    const ring = this.links[this.network.nodeById[link.to].inbound.ring];
+    for (const v of ring.lanes[0]) {
+      const distance = ring.length - v.position;
+      if (distance > GAP_ACCEPTANCE_RANGE) break;
+      if (distance / Math.max(v.speed, 0.1) <= MERGE_GAP_SECONDS) return true;
+    }
+    return false;
   }
 
   // Permissive right turns yield to approaching straight/left traffic that has
@@ -210,6 +245,7 @@ export class Simulation {
       v.leg += 1;
       v.lane = v.path.toLane;
       v.position = Math.max(v.length, Math.min(v.progress - v.path.length, tail));
+      v.desired = link.speed * v.speedFactor;
       delete v.path; delete v.progress; delete v.crossSpeed;
       lane.push(v);
     }
@@ -218,7 +254,13 @@ export class Simulation {
   moveLink(link, now) {
     const { run } = this.scenario;
     let downstreamBlocked = false;
+    const pocket = link.pocket;
+    const toPocket = [];
+    link.pocketBlocked = false;
     for (let laneIndex = 0; laneIndex < link.lanes.length; laneIndex++) {
+      const feedsPocket = pocket && laneIndex === pocket.lane - 1;
+      const pocketLane = pocket ? link.lanes[pocket.lane] : null;
+      const pocketRoom = () => pocketLane.length ? pocketLane.at(-1).position - pocketLane.at(-1).length - GAP - pocket.start : Infinity;
       const lane = link.lanes[laneIndex];
       const head = lane[0];
       const refusal = head && link.to ? this.entryRefusal(head, link, laneIndex, now) : null;
@@ -229,12 +271,16 @@ export class Simulation {
         const v = lane[i];
         const leader = retained.at(-1);
         const exitLink = !link.to;
-        const limit = leader ? leader.position - leader.length - GAP : exitLink ? Infinity : link.length;
+        // A right-turner bound for the pocket stops at the pocket entrance until it
+        // has room there, holding everything behind it in this lane.
+        const pocketBound = feedsPocket && v.moves[v.leg] === 'right';
+        const stopAt = pocketBound ? pocket.start : link.length;
+        const limit = leader ? Math.min(stopAt, leader.position - leader.length - GAP) : exitLink ? Infinity : stopAt;
         const gap = Math.max(0, limit - v.position);
         // Only the original lane head may be released this step; a follower must
         // reach the stop line and pass its own entry checks on a later step.
         const isHead = i === 0;
-        const free = isHead && !leader && (exitLink || !refusal);
+        const free = isHead && !leader && !pocketBound && (exitLink || !refusal);
         const target = free ? v.desired : Math.min(v.desired, Math.sqrt(2 * 3 * gap), gap / 1.1);
         v.speed = Math.max(0, Math.min(target, v.speed + FLEET[v.type].acceleration * STEP, gap / STEP));
         v.position = Math.min(limit, v.position + v.speed * STEP);
@@ -245,7 +291,11 @@ export class Simulation {
           if (v.measured) this.journeys.push({ time: now + STEP - v.departure, entry: v.entry, exit: link.id });
           continue;
         }
-        if (isHead && !refusal && link.to && v.position >= link.length - 0.15) {
+        if (pocketBound && v.position >= pocket.start - 0.15) {
+          if (pocketRoom() - toPocket.reduce((n, p) => n + p.length + GAP, 0) >= 0) { toPocket.push(v); continue; }
+          link.pocketBlocked = true;
+        }
+        if (isHead && !pocketBound && !refusal && link.to && v.position >= link.length - 0.15) {
           v.path = this.plannedPath(v, link, laneIndex);
           v.crossSpeed = Math.min(v.desired, CROSSING_SPEED[v.path.movement]);
           v.speed = v.crossSpeed;
@@ -258,6 +308,8 @@ export class Simulation {
       }
       link.lanes[laneIndex] = retained;
     }
+    // Pocket entrants join after all lanes moved, so none moves twice in a step.
+    for (const v of toPocket) { v.lane = pocket.lane; link.lanes[pocket.lane].push(v); }
     if (!link.to) return;
     link.queue = queueExtent(link);
     if (now >= run.warmup) {
@@ -267,6 +319,7 @@ export class Simulation {
       if (link.kind === 'entry' && link.waiting.length) link.blockedSeconds += STEP;
       if (link.kind === 'internal' && link.queue >= link.length - 15) link.spillbackSeconds += STEP;
       if (downstreamBlocked) link.downstreamBlockedSeconds += STEP;
+      if (link.pocketBlocked) link.pocketOverflowSeconds += STEP;
     }
   }
 
@@ -279,10 +332,10 @@ export class Simulation {
     while (link.waiting.length) {
       const vehicle = link.waiting[0];
       const room = index => link.lanes[index].length ? link.lanes[index].at(-1).position - link.lanes[index].at(-1).length - GAP : Infinity;
-      let laneIndex = laneForMovement(this.network.byId[link.id], vehicle.moves[0]);
+      let laneIndex = approachLane(this.network.byId[link.id], vehicle.moves[0]);
       if (laneIndex === undefined) {
         laneIndex = 0;
-        for (let i = 1; i < link.lanes.length; i++) if (room(i) > room(laneIndex)) laneIndex = i;
+        for (let i = 1; i < link.throughLanes; i++) if (room(i) > room(laneIndex)) laneIndex = i;
       }
       if (room(laneIndex) < vehicle.length) break;
       vehicle.lane = laneIndex;
@@ -310,7 +363,7 @@ export class Simulation {
   runToEnd() { while (!this.done) this.step(); return this.result(); }
 
   phases() {
-    return Object.fromEntries(this.network.nodes.map(n => [n.id, signalState(this.scenario.signals, this.time, n.offset)]));
+    return Object.fromEntries(this.network.nodes.map(n => [n.id, n.control === 'priority' ? { group: 'priority', colour: 'none', remaining: 0 } : signalState(n.plan, this.time, n.offset)]));
   }
 
   snapshot() {
@@ -324,7 +377,8 @@ export class Simulation {
   result() {
     const inbound = Object.values(this.links).filter(l => l.to);
     const queues = Object.fromEntries(inbound.map(l => [l.id, { label: l.label, kind: l.kind, mean: l.samples ? l.queueSum / l.samples : 0, max: l.maxQueue,
-      entryBlockedSeconds: l.blockedSeconds, spillbackSeconds: l.spillbackSeconds, downstreamBlockedSeconds: l.downstreamBlockedSeconds }]));
+      entryBlockedSeconds: l.blockedSeconds, spillbackSeconds: l.spillbackSeconds, downstreamBlockedSeconds: l.downstreamBlockedSeconds,
+      pocketOverflowSeconds: l.pocketOverflowSeconds }]));
     const waiting = this.entries.reduce((n, l) => n + l.waiting.length, 0);
     const times = this.journeys.map(j => j.time);
     return {

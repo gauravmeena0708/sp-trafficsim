@@ -29,18 +29,23 @@ The [product plan](product-spec.md) defines the target. This checklist distingui
 - [x] Contiguous queue definition replacing the v0.1 slow-vehicle extent.
 - [x] Headless-browser verification of the main workflows.
 
+### Network editing (v0.3)
+
+- [x] Independent per-approach lanes, speed, length and turning shares.
+- [x] Per-junction green times on the corridor.
+- [x] Right-turn pockets with finite storage; overflow blocks through traffic.
+- [x] Single-lane roundabout with entries giving way to circulating traffic.
+- [x] Pre-run model checks: invalid inputs, ignored demand or settings, shared-lane right turns, indicative over-capacity.
+
 ## Phase 1 — reduced scope
 
 The full Phase 1 in the product plan is large. Deliver it in this order, so each step rests on a tested network engine.
 
-### Next: complete the network editor
+### Next: free-form editing
 
-- [ ] Independent per-road properties (length, lanes, speed) and per-approach turning shares.
-- [ ] Per-junction signal plans, including separate greens per junction.
-- [ ] Free-form editing of connected junctions with connectivity checks.
-- [ ] Turning pockets with finite storage, and their overflow blocking through traffic.
-- [ ] Basic single-lane roundabout with entry yielding to circulating traffic.
-- [ ] Pre-run model checks: disconnected routes, impossible turns, invalid phases.
+- [ ] Draw and connect junctions on the map, with connectivity checks (disconnected routes, impossible turns).
+- [ ] Left-turn pockets; per-junction yellow/all-red and phase sequences beyond two groups.
+- [ ] Roundabout geometry options (radius, entry width) and multi-lane roundabouts.
 
 ### Then: richer studies
 

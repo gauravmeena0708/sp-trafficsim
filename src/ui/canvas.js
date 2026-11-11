@@ -38,37 +38,57 @@ export class NetworkCanvas {
 
   // Screen layout: nodes keep their world order; links are stretched between
   // node box edges (or the boundary) using the longitudinal scale.
-  computeLayout(network) {
-    const { width: w, height: h } = this;
-    const nodes = network.nodes;
-    const half = nodes[0].half;
-    const arm = network.links.find(l => l.kind === 'entry').length;
-    const span = nodes.at(-1).x - nodes[0].x - 2 * half;
-    const margin = 34, marginY = 58;
-    const fit = (lateral) => Math.min(
-      (w - 2 * margin - 2 * half * lateral * nodes.length) / (2 * arm + Math.max(0, span)),
-      (h - 2 * marginY - 2 * half * lateral) / (2 * arm));
-    let scale = fit(MIN_LANE_PX / 3.5);
-    const lateral = Math.max(scale, MIN_LANE_PX / 3.5);
-    scale = Math.max(0.05, fit(lateral));
-    const totalWidth = 2 * arm * scale + Math.max(0, span) * scale + 2 * half * lateral * nodes.length;
-    const left = (w - totalWidth) / 2 + arm * scale + half * lateral;
-    const centres = {};
-    nodes.forEach((n, i) => {
-      centres[n.id] = { x: left + (i ? (n.x - nodes[0].x - 2 * half) * scale + 2 * half * lateral : 0), y: h / 2 };
-    });
+  // Place nodes by walking links between junctions: each junction box is drawn at
+  // the lateral scale and each road at the longitudinal scale.
+  static place(network, scale, lateral) {
+    const half = network.nodes[0].half;
+    const centres = { [network.nodes[0].id]: { x: 0, y: 0 } };
+    for (let changed = true; changed;) {
+      changed = false;
+      for (const link of network.links) {
+        if (!link.from || !link.to || !centres[link.from] || centres[link.to]) continue;
+        // Circulating links are compact, so they share the junction (lateral) scale.
+        const step = 2 * half * lateral + link.length * (link.kind === 'ring' ? lateral : scale);
+        centres[link.to] = { x: centres[link.from].x + link.dx * step, y: centres[link.from].y + link.dy * step };
+        changed = true;
+      }
+    }
     const ends = {};
+    const box = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
     for (const link of network.links) {
-      const edge = (nodeId, sign) => {
-        const c = centres[nodeId];
-        return { x: c.x + sign * link.dx * half * lateral, y: c.y + sign * link.dy * half * lateral };
-      };
+      const edge = (nodeId, sign) => ({ x: centres[nodeId].x + sign * link.dx * half * lateral, y: centres[nodeId].y + sign * link.dy * half * lateral });
       const start = link.from ? edge(link.from, 1) : null;
       const end = link.to ? edge(link.to, -1) : null;
       const s = start ?? { x: end.x - link.dx * link.length * scale, y: end.y - link.dy * link.length * scale };
       const e = end ?? { x: start.x + link.dx * link.length * scale, y: start.y + link.dy * link.length * scale };
       ends[link.id] = { s, e, pxPerMetre: Math.hypot(e.x - s.x, e.y - s.y) / link.length };
+      for (const p of [s, e]) { box.minX = Math.min(box.minX, p.x); box.maxX = Math.max(box.maxX, p.x); box.minY = Math.min(box.minY, p.y); box.maxY = Math.max(box.maxY, p.y); }
     }
+    return { centres, ends, box, width: box.maxX - box.minX, height: box.maxY - box.minY };
+  }
+
+  computeLayout(network) {
+    const { width: w, height: h } = this;
+    const availableW = w - 2 * 34, availableH = h - 2 * 58;
+    const minLateral = MIN_LANE_PX / 3.5;
+    // Extent is linear in scale for a fixed lateral scale: solve from two samples.
+    const solve = lateral => {
+      const a = NetworkCanvas.place(network, 1, lateral), b = NetworkCanvas.place(network, 2, lateral);
+      const fit = (one, two, available) => (available - (2 * one - two)) / Math.max(1e-9, two - one);
+      return Math.min(fit(a.width, b.width, availableW), fit(a.height, b.height, availableH));
+    };
+    let scale = Math.max(0.05, solve(minLateral));
+    let lateral = minLateral;
+    if (scale > minLateral) {
+      // Room for true proportions: draw lanes and roads at one uniform scale.
+      const unit = NetworkCanvas.place(network, 1, 1);
+      scale = lateral = Math.min(availableW / unit.width, availableH / unit.height);
+    }
+    const placed = NetworkCanvas.place(network, scale, lateral);
+    const dx = (w - placed.width) / 2 - placed.box.minX, dy = (h - placed.height) / 2 - placed.box.minY;
+    const shift = p => ({ x: p.x + dx, y: p.y + dy });
+    const centres = Object.fromEntries(Object.entries(placed.centres).map(([id, p]) => [id, shift(p)]));
+    const ends = Object.fromEntries(Object.entries(placed.ends).map(([id, e]) => [id, { s: shift(e.s), e: shift(e.e), pxPerMetre: e.pxPerMetre }]));
     this.layout = { network, scale, lateral, centres, ends, key: `${w}x${h}` };
     return this.layout;
   }
@@ -121,31 +141,58 @@ export class NetworkCanvas {
     for (let y = 0; y < h; y += 28) { c.beginPath(); c.moveTo(0, y); c.lineTo(w, y); c.stroke(); }
 
     // Carriageways: each directed link paints its lanes to the left of the centre line.
+    const band = (link, from, to, start, end) => {
+      const corners = [this.offsetPoint(link, from, start), this.offsetPoint(link, from, end), this.offsetPoint(link, to, end), this.offsetPoint(link, to, start)];
+      c.beginPath(); corners.forEach((p, i) => i ? c.lineTo(p.x, p.y) : c.moveTo(p.x, p.y)); c.closePath(); c.fill();
+    };
     for (const link of network.links) {
       const width = link.lanes * 3.5;
-      const corners = [this.offsetPoint(link, 0, 0), this.offsetPoint(link, 0, link.length), this.offsetPoint(link, width, link.length), this.offsetPoint(link, width, 0)];
       c.fillStyle = '#5e6965';
-      c.beginPath(); corners.forEach((p, i) => i ? c.lineTo(p.x, p.y) : c.moveTo(p.x, p.y)); c.closePath(); c.fill();
-      for (let k = 1; k < link.lanes; k++) this.line(link, k * 3.5, 0, link.length, '#d2d8cb', .7, [6, 6]);
-      if (link.kind !== 'entry') this.line(link, 0, 0, link.length, '#c6ccab', 1.4);
+      if (link.pocket) {
+        // The pocket (median-most lane) exists only over its final stretch.
+        band(link, 3.5, width, 0, link.length);
+        band(link, 0, 3.5, link.pocket.start, link.length);
+        this.line(link, 3.5, link.pocket.start, link.length, '#d2d8cb', .7, [3, 3]);
+        for (let k = 2; k < link.lanes; k++) this.line(link, k * 3.5, 0, link.length, '#d2d8cb', .7, [6, 6]);
+      } else {
+        band(link, 0, width, 0, link.length);
+        for (let k = 1; k < link.lanes; k++) this.line(link, k * 3.5, 0, link.length, '#d2d8cb', .7, [6, 6]);
+      }
+      if (link.kind === 'exit' || link.kind === 'internal') this.line(link, 0, 0, link.length, '#c6ccab', 1.4);
     }
     for (const node of network.nodes) {
       const centre = centres[node.id];
       const size = node.half * lateral;
       c.fillStyle = '#64706a'; c.fillRect(centre.x - size, centre.y - size, size * 2, size * 2);
       c.fillStyle = '#839270'; c.font = '600 9px system-ui'; c.textAlign = 'left';
-      if (network.nodes.length > 1) c.fillText(node.label.toUpperCase(), centre.x + size + 6, centre.y - size - 6);
+      if (network.nodes.length > 1 && node.control === 'signal') c.fillText(node.label.toUpperCase(), centre.x + size + 6, centre.y - size - 6);
+    }
+    if (network.island) {
+      // Central island: drawn between the circulating links, not to scale.
+      const ids = network.nodes.map(n => centres[n.id]);
+      const cx = ids.reduce((s, p) => s + p.x, 0) / ids.length, cy = ids.reduce((s, p) => s + p.y, 0) / ids.length;
+      const radius = Math.hypot(ids[0].x - cx, ids[0].y - cy) - network.nodes[0].half * lateral - 2;
+      c.fillStyle = '#dbe4cf'; c.strokeStyle = '#c8d4b9'; c.lineWidth = 1;
+      c.beginPath(); c.arc(cx, cy, Math.max(4, radius), 0, Math.PI * 2); c.fill(); c.stroke();
     }
     for (const link of network.links.filter(l => l.to)) {
       const node = network.nodeById[link.to];
       const width = link.lanes * 3.5;
       const stopA = this.offsetPoint(link, 0.3, link.length), stopB = this.offsetPoint(link, width - 0.3, link.length);
-      c.strokeStyle = '#eef0df'; c.lineWidth = 2;
-      c.beginPath(); c.moveTo(stopA.x, stopA.y); c.lineTo(stopB.x, stopB.y); c.stroke();
-      const colour = groupColour(simulation.scenario.signals, simulation.time, armGroup(link.toArm), node.offset);
-      const lamp = this.offsetPoint(link, width + 1.6, link.length - 2);
-      c.fillStyle = SIGNAL_COLOURS[colour];
-      c.beginPath(); c.arc(lamp.x, lamp.y, 3.2, 0, Math.PI * 2); c.fill();
+      if (node.control === 'priority') {
+        // Give-way line (dashed) for entries; circulating traffic has priority.
+        if (link.kind === 'entry') {
+          c.strokeStyle = '#eef0df'; c.lineWidth = 1.6; c.setLineDash([2, 2]);
+          c.beginPath(); c.moveTo(stopA.x, stopA.y); c.lineTo(stopB.x, stopB.y); c.stroke(); c.setLineDash([]);
+        }
+      } else {
+        c.strokeStyle = '#eef0df'; c.lineWidth = 2;
+        c.beginPath(); c.moveTo(stopA.x, stopA.y); c.lineTo(stopB.x, stopB.y); c.stroke();
+        const colour = groupColour(node.plan, simulation.time, armGroup(link.toArm), node.offset);
+        const lamp = this.offsetPoint(link, width + 1.6, link.length - 2);
+        c.fillStyle = SIGNAL_COLOURS[colour];
+        c.beginPath(); c.arc(lamp.x, lamp.y, 3.2, 0, Math.PI * 2); c.fill();
+      }
       const state = simulation.links[link.id];
       if (state.queue > 5) this.line(link, width + 0.9, link.length, link.length - state.queue, '#d2a052', 2);
       if (this.selected === link.id) this.line(link, width + 1.9, 0, link.length, '#8da878', 2);

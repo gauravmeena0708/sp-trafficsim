@@ -27,12 +27,13 @@ npm run benchmark
 
 ## Try a study
 
-1. Choose a layout template, then configure road lengths, lane counts, speed limits, directional demand, turning shares and vehicle mix. For the corridor, set the length of the link between junctions and junction B's signal offset.
-2. Set independent east–west and north–south green durations from **5 to 300 seconds**. Yellow and all-red intervals are separate.
-3. Run, pause, change playback speed, and inspect each approach — including links between junctions — for signal holds, blocked receiving lanes and spillback.
-4. Duplicate the baseline and modify an alternative.
-5. Open **Compare options** and run paired-seed replications (with 95% intervals on the change from the baseline), or sweep either signal group's green under low, central and high demand.
-6. Compare delay with completed trips and waiting demand. Export per-seed CSV, print a report, or download the complete project JSON.
+1. Choose a layout template: four-arm, T-junction, two-junction corridor or single-lane roundabout. Then configure shared road lengths, lane counts, speed limits, directional demand, turning shares and vehicle mix. Under **Approach settings**, give any approach its own lanes, speed, length, turning shares or a right-turn pocket. On the corridor, set the link length, junction B's offset, and optionally each junction's own green times.
+2. Review the **Model checks** under the settings. They separate blocking errors from assumptions worth reviewing, such as ignored demand, right-turners sharing a single lane, or demand above an indicative discharge rate.
+3. Set independent east–west and north–south green durations from **5 to 300 seconds**. Yellow and all-red intervals are separate.
+4. Run, pause, change playback speed, and inspect each approach — including links between junctions — for signal holds, blocked receiving lanes and spillback.
+5. Duplicate the baseline and modify an alternative.
+6. Open **Compare options** and run paired-seed replications (with 95% intervals on the change from the baseline), or sweep either signal group's green under low, central and high demand.
+7. Compare delay with completed trips and waiting demand. Export per-seed CSV, print a report, or download the complete project JSON.
 
 Valid scenario inputs are automatically saved in this browser. Download project files for portable backups. Imported result claims are discarded; rerun experiments to produce trusted local outputs. No project data is sent to a server. Static hosting will still receive normal page/asset requests.
 
@@ -63,7 +64,8 @@ index.html                 Accessible workbench shell
 styles.css                 Responsive interface and print styles
 src/
   model/project.js         Versioned scenarios, validation, migration, import
-  model/network.js         Template → network graph, routes, junction paths, conflicts
+  model/network.js         Template → network graph, routes, pockets, roundabout, conflicts
+  model/checks.js          Pre-run model checks
   simulation/
     engine.js              Deterministic fixed-step network simulation
     signals.js             Two-group fixed-time signals with offsets

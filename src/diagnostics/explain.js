@@ -7,8 +7,16 @@ export function explainApproach(simulation, linkId) {
   const link = simulation.links[linkId];
   if (!link) return [];
   const node = simulation.network.nodeById[link.to];
-  const green = groupGreen(simulation.scenario.signals, simulation.time, armGroup(link.toArm), node.offset);
   const descriptions = [];
+  if (node.control === 'priority') {
+    if (link.kind === 'entry' && link.queue > 20) descriptions.push({ title: 'Waiting for gaps in circulating traffic', detail: 'Entering vehicles give way to anyone on the roundabout arriving within 3.5 seconds. Heavy circulating flow from the previous entries leaves fewer gaps here; compare demand on the upstream arms before attributing this to the entry itself.' });
+    if (link.kind === 'ring' && link.queue > 5) descriptions.push({ title: 'Circulating traffic held', detail: 'Vehicles on the roundabout are waiting for room on the next section. If this persists the roundabout may be locking up under this demand.' });
+    if (link.waiting?.length) descriptions.push({ title: 'Entry storage exhausted', detail: `${link.waiting.length} vehicles are waiting outside the model. They remain included in demand accounting.` });
+    if (!descriptions.length) descriptions.push({ title: 'No current queue evidence', detail: 'No substantial queue is detected here. This does not predict conditions outside the study area.' });
+    return descriptions;
+  }
+  const green = groupGreen(node.plan, simulation.time, armGroup(link.toArm), node.offset);
+  if (link.pocketBlocked) descriptions.push({ title: 'Right-turn pocket full', detail: `The ${Math.round(link.pocket.length)} m pocket is full, so the next right-turner waits at its entrance and holds through traffic in the lane behind it. A longer pocket, more right-turn green or fewer right-turners would reduce this.` });
   const heldDownstream = link.held.some(Boolean);
   if (!green && link.queue > 0) descriptions.push({ title: 'Signal hold', detail: 'This approach is not green. Queuing during a red phase is expected; this alone does not establish a design problem.' });
   if (green && heldDownstream) {

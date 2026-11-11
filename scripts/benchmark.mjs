@@ -7,6 +7,7 @@ import { Simulation } from '../src/simulation/engine.js';
 const workloads = {
   fourArmStraight: createScenario(),
   corridorTurning: Object.assign(createScenario(), { template: 'corridor', turning: { left: 20, right: 15 } }),
+  roundaboutTurning: Object.assign(createScenario(), { template: 'roundabout', turning: { left: 25, right: 25 } }),
 };
 
 const report = {};

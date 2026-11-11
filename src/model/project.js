@@ -1,8 +1,16 @@
 export const DIRECTIONS = ['north', 'east', 'south', 'west'];
-import { TEMPLATES } from './network.js';
+import { TEMPLATES, approachSettings, compileNetwork, configurableApproaches } from './network.js';
 
-export const ENGINE_VERSION = 'illustrative-network/0.2.0';
-export const SCHEMA_VERSION = 2;
+export const ENGINE_VERSION = 'illustrative-network/0.3.0';
+export const SCHEMA_VERSION = 3;
+export const APPROACH_FIELDS = {
+  lanes: { label: 'Lanes', min: 1, max: 3, integer: true },
+  speed: { label: 'Speed limit (km/h)', min: 20, max: 80 },
+  length: { label: 'Approach length (m)', min: 100, max: 600, entryOnly: true },
+  left: { label: 'Left turn (%)', min: 0, max: 100 },
+  right: { label: 'Right turn (%)', min: 0, max: 100 },
+  pocket: { label: 'Right-turn pocket (m)', min: 0, max: 200 },
+};
 export const FLEET = {
   twoWheeler: { label: 'Two-wheelers', length: 2, speedFactor: 1, acceleration: 2.2, occupancy: 1.2, colour: '#d48b37' },
   auto: { label: 'Auto-rickshaws', length: 3, speedFactor: 0.85, acceleration: 1.6, occupancy: 2, colour: '#9c78cc' },
@@ -18,8 +26,9 @@ export function createScenario(name = 'Existing junction') {
     template: 'fourArm',
     geometry: { length: 250, lanes: 2, speed: 40, spacing: 200 },
     turning: { left: 0, right: 0 },
+    approaches: {},
     demand: { north: 450, east: 800, south: 450, west: 800, multiplier: 1 },
-    signals: { eastWest: 40, northSouth: 25, yellow: 3, allRed: 2, offset: 0 },
+    signals: { eastWest: 40, northSouth: 25, yellow: 3, allRed: 2, offset: 0, junctions: {} },
     fleet: { twoWheeler: 30, auto: 10, car: 50, bus: 5, truck: 5 },
     run: { duration: 600, warmup: 60, seed: 42 },
   };
@@ -58,6 +67,33 @@ export function validateScenario(s) {
   range(s.run?.duration, 120, 3600, 'Run duration', true);
   range(s.run?.warmup, 0, (s.run?.duration ?? 0) - 60, 'Warm-up duration', true);
   range(s.run?.seed, 1, 2147483647, 'Random seed', true);
+  if (!s.approaches || typeof s.approaches !== 'object' || Array.isArray(s.approaches)) errors.push('Approach settings are missing.');
+  else for (const [id, overrides] of Object.entries(s.approaches)) {
+    if (!overrides || typeof overrides !== 'object') { errors.push(`Approach ${id} settings are invalid.`); continue; }
+    for (const [key, value] of Object.entries(overrides)) {
+      const field = APPROACH_FIELDS[key];
+      if (!field) errors.push(`Approach ${id} has an unknown setting “${key}”.`);
+      else range(value, field.min, field.max, `${id} ${field.label.toLowerCase()}`, field.integer);
+    }
+    const left = overrides.left ?? s.turning?.left ?? 0, right = overrides.right ?? s.turning?.right ?? 0;
+    if (left + right > 100) errors.push(`${id}: left- and right-turn shares cannot exceed 100% together.`);
+  }
+  const junctions = s.signals?.junctions;
+  if (!junctions || typeof junctions !== 'object' || Array.isArray(junctions)) errors.push('Junction signal settings are missing.');
+  else for (const [id, plan] of Object.entries(junctions)) {
+    for (const key of Object.keys(plan ?? {})) {
+      if (!['eastWest', 'northSouth'].includes(key)) errors.push(`Junction ${id} has an unknown signal setting “${key}”.`);
+      else range(plan[key], 5, 300, `Junction ${id} ${key === 'eastWest' ? 'east–west' : 'north–south'} green`);
+    }
+  }
+  if (!errors.length) {
+    // Pockets must leave a through section before them on the approach.
+    const network = compileNetwork(s);
+    for (const link of configurableApproaches(network)) {
+      const pocket = approachSettings(s, link.id, link.kind).pocket;
+      if (pocket && pocket > link.length - 10) errors.push(`${link.label}: the right-turn pocket must be at least 10 m shorter than the ${Math.round(link.length)} m approach.`);
+    }
+  }
   return errors;
 }
 
@@ -65,16 +101,20 @@ export function createProject() {
   return { schemaVersion: SCHEMA_VERSION, title: 'Junction study', scenarios: [createScenario()], results: [] };
 }
 
-// Schema 1 described a single straight-through four-arm junction.
+// Schema 1 described a single straight-through four-arm junction; schema 2 added
+// templates and shared turning shares; schema 3 adds per-approach and per-junction settings.
 export function migrateScenario(s, fromVersion) {
-  if (fromVersion >= 2 || !s || typeof s !== 'object') return s;
-  return { ...s, template: 'fourArm', geometry: { ...s.geometry, spacing: 200 }, turning: { left: 0, right: 0 } };
+  if (fromVersion >= SCHEMA_VERSION || !s || typeof s !== 'object') return s;
+  let next = s;
+  if (fromVersion < 2) next = { ...next, template: 'fourArm', geometry: { ...next.geometry, spacing: 200 }, turning: { left: 0, right: 0 } };
+  if (fromVersion < 3) next = { ...next, approaches: {}, signals: { ...next.signals, junctions: {} } };
+  return next;
 }
 
 export function parseProject(text) {
   if (text.length > 5_000_000) throw new Error('Project is larger than the 5 MB import limit.');
   const project = JSON.parse(text);
-  if (![1, SCHEMA_VERSION].includes(project?.schemaVersion)) throw new Error('Unsupported project version.');
+  if (![1, 2, SCHEMA_VERSION].includes(project?.schemaVersion)) throw new Error('Unsupported project version.');
   if (Array.isArray(project.scenarios)) project.scenarios = project.scenarios.map(s => migrateScenario(s, project.schemaVersion));
   if (!Array.isArray(project.scenarios) || project.scenarios.length < 1 || project.scenarios.length > 30) throw new Error('A project must contain 1–30 scenarios.');
   const ids = new Set();
