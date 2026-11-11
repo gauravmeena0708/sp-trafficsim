@@ -1,8 +1,9 @@
 export const DIRECTIONS = ['north', 'east', 'south', 'west'];
-import { TEMPLATES, approachSettings, compileNetwork, configurableApproaches } from './network.js';
+import { TEMPLATES, analysePhase, approachSettings, compileNetwork, configurableApproaches, movementLabel, nodeMovements } from './network.js';
+const MOVEMENT_ID = /^(north|east|south|west):(left|straight|right)$/;
 
-export const ENGINE_VERSION = 'illustrative-network/0.4.0';
-export const SCHEMA_VERSION = 4;
+export const ENGINE_VERSION = 'illustrative-network/0.5.0';
+export const SCHEMA_VERSION = 5;
 
 // Demand over time: each entry's base veh/h is multiplied by the factor for the
 // current period. Presets are written out as explicit factors so a saved
@@ -42,7 +43,7 @@ export function createScenario(name = 'Existing junction') {
     turning: { left: 0, right: 0 },
     approaches: {},
     demand: { north: 450, east: 800, south: 450, west: 800, multiplier: 1, profile: profilePreset('flat', 600) },
-    signals: { eastWest: 40, northSouth: 25, yellow: 3, allRed: 2, offset: 0, junctions: {} },
+    signals: { mode: 'twoPhase', eastWest: 40, northSouth: 25, phases: [], yellow: 3, allRed: 2, offset: 0, junctions: {} },
     fleet: { twoWheeler: 30, auto: 10, car: 50, bus: 5, truck: 5 },
     run: { duration: 600, warmup: 60, seed: 42 },
   };
@@ -108,15 +109,44 @@ export function validateScenario(s) {
       else range(plan[key], 5, 300, `Junction ${id} ${key === 'eastWest' ? 'east–west' : 'north–south'} green`);
     }
   }
+  if (!['twoPhase', 'custom'].includes(s.signals?.mode)) errors.push('Choose a signal plan type.');
+  if (!Array.isArray(s.signals?.phases)) errors.push('Signal phases are missing.');
+  else if (s.signals.mode === 'custom') {
+    if (s.signals.phases.length < 2 || s.signals.phases.length > 8) errors.push('A custom signal plan needs 2–8 phases.');
+    s.signals.phases.forEach((p, i) => {
+      range(p?.green, 5, 300, `Phase ${i + 1} green`);
+      if (typeof p?.name !== 'string' || p.name.length > 40) errors.push(`Phase ${i + 1} name must be up to 40 characters.`);
+      if (!Array.isArray(p?.movements) || !p.movements.length) errors.push(`Phase ${i + 1} must serve at least one movement.`);
+      else if (p.movements.some(m => !MOVEMENT_ID.test(m)) || new Set(p.movements).size !== p.movements.length) errors.push(`Phase ${i + 1} lists an invalid or repeated movement.`);
+    });
+  }
   if (!errors.length) {
     // Pockets must leave a through section before them on the approach.
     const network = compileNetwork(s);
+    if (s.signals.mode === 'custom') errors.push(...phasePlanErrors(network, s.signals.phases));
     for (const link of configurableApproaches(network)) {
       const pocket = approachSettings(s, link.id, link.kind).pocket;
       if (pocket && pocket > link.length - 10) errors.push(`${link.label}: the right-turn pocket must be at least 10 m shorter than the ${Math.round(link.length)} m approach.`);
     }
   }
   return errors;
+}
+
+// A custom plan must fit every signalised junction: phases may only list
+// movements the junction offers, every offered movement must get green, and
+// two conflicting straight/left movements may not share a phase.
+function phasePlanErrors(network, phases) {
+  const errors = [];
+  for (const node of network.nodes.filter(n => n.control === 'signal')) {
+    const offered = nodeMovements(network, node).map(m => m.id);
+    const where = network.nodes.length > 1 ? ` at ${node.label}` : '';
+    phases.forEach((p, i) => {
+      for (const id of p.movements) if (!offered.includes(id)) errors.push(`Phase ${i + 1} lists ${movementLabel(id).toLowerCase()}, which this layout does not have${where}.`);
+      for (const [a, b] of analysePhase(network, node, p.movements).errors) errors.push(`Phase ${i + 1} runs ${movementLabel(a).toLowerCase()} and ${movementLabel(b).toLowerCase()} together, but their paths cross${where}.`);
+    });
+    for (const id of offered) if (!phases.some(p => p.movements.includes(id))) errors.push(`${movementLabel(id)} never gets green${where}: vehicles making it would wait forever.`);
+  }
+  return [...new Set(errors)];
 }
 
 export function createProject() {
@@ -131,13 +161,14 @@ export function migrateScenario(s, fromVersion) {
   if (fromVersion < 2) next = { ...next, template: 'fourArm', geometry: { ...next.geometry, spacing: 200 }, turning: { left: 0, right: 0 } };
   if (fromVersion < 3) next = { ...next, approaches: {}, signals: { ...next.signals, junctions: {} } };
   if (fromVersion < 4) next = { ...next, demand: { ...next.demand, profile: profilePreset('flat', next.run?.duration ?? 600) } };
+  if (fromVersion < 5) next = { ...next, signals: { ...next.signals, mode: 'twoPhase', phases: [] } };
   return next;
 }
 
 export function parseProject(text) {
   if (text.length > 5_000_000) throw new Error('Project is larger than the 5 MB import limit.');
   const project = JSON.parse(text);
-  if (![1, 2, 3, SCHEMA_VERSION].includes(project?.schemaVersion)) throw new Error('Unsupported project version.');
+  if (![1, 2, 3, 4, SCHEMA_VERSION].includes(project?.schemaVersion)) throw new Error('Unsupported project version.');
   if (Array.isArray(project.scenarios)) project.scenarios = project.scenarios.map(s => migrateScenario(s, project.schemaVersion));
   if (!Array.isArray(project.scenarios) || project.scenarios.length < 1 || project.scenarios.length > 30) throw new Error('A project must contain 1–30 scenarios.');
   const ids = new Set();

@@ -39,7 +39,9 @@ Pass `--browser <path>` to choose a browser, or `--source` to test the source tr
 
 1. Choose a layout template: four-arm, T-junction, two-junction corridor or single-lane roundabout. Then configure shared road lengths, lane counts, speed limits, directional demand, turning shares and vehicle mix. Under **Approach settings**, give any approach its own lanes, speed, length, turning shares or a right-turn pocket. On the corridor, set the link length, junction B's offset, and optionally each junction's own green times.
 2. Review the **Model checks** under the settings. They separate blocking errors from assumptions worth reviewing, such as ignored demand, right-turners sharing a single lane, or demand above an indicative discharge rate.
-3. Set independent east–west and north–south green durations from **5 to 300 seconds**. Yellow and all-red intervals are separate.
+3. Set signal timings. The default plan has independent east–west and north–south greens from **5 to 300 seconds**, with separate yellow and all-red intervals.
+   - Choose **Custom phases** to decide which movements go together: for example protected right-turn phases, or one arm at a time.
+   - The editor rejects conflicting combinations and marks right turns that must give way.
 4. Run, pause, change playback speed, and inspect each approach — including links between junctions — for signal holds, blocked receiving lanes and spillback.
 5. Duplicate the baseline and modify an alternative.
 6. Open **Compare options** and run paired-seed replications, with 95% intervals on the change from the baseline. Or sweep either signal group's green under low, central and high demand.

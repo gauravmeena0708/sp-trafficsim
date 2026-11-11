@@ -44,7 +44,8 @@ The full Phase 1 in the product plan is large. Deliver it in this order, so each
 ### Next: free-form editing
 
 - [ ] Draw and connect junctions on the map, with connectivity checks (disconnected routes, impossible turns).
-- [ ] Left-turn pockets; per-junction yellow/all-red and phase sequences beyond two groups.
+- [x] Custom signal phase plans: movement-level greens, protected/permitted right turns, conflict validation, presets, phase sweeps.
+- [ ] Left-turn pockets; per-junction custom plans and clearance times; overlapping movements between phases.
 - [ ] Roundabout geometry options (radius, entry width) and multi-lane roundabouts.
 
 ### Then: richer studies

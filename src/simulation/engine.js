@@ -1,7 +1,7 @@
 import { DIRECTIONS, ENGINE_VERSION, FLEET, fingerprint, validateScenario } from '../model/project.js';
-import { approachLane, armGroup, chooseRoute, compileNetwork, junctionPath, pathsConflict } from '../model/network.js';
+import { approachLane, chooseRoute, compileNetwork, junctionPath, movementsFrom, pathsConflict } from '../model/network.js';
 import { randomGenerator } from './random.js';
-import { groupGreen, signalState } from './signals.js';
+import { movementGreen, signalState } from './signals.js';
 
 export const STEP = 0.2;
 export const GAP = 2.5;
@@ -75,6 +75,7 @@ export class Simulation {
       held: Array(link.lanes).fill(false),
       waiting: [], queue: 0, maxQueue: 0, queueSum: 0, samples: 0,
       blockedSeconds: 0, spillbackSeconds: 0, downstreamBlockedSeconds: 0, pocketOverflowSeconds: 0, pocketBlocked: false,
+      movementTypes: link.to ? movementsFrom(this.network, link.id).map(m => m.movement) : [],
       wasGreen: false, cycleTag: null, failures: 0, firstFailure: null, persistSince: null, openEvent: null,
     }]));
     this.events = [];
@@ -159,11 +160,12 @@ export class Simulation {
     return lane ?? Math.min(definition.throughLanes - 1, Math.max(0, fallback));
   }
 
+// Signals control each movement (left, straight, right) from an approach.
   // Priority (roundabout) junctions have no signal; entry is governed by yielding.
-  nodeGreen(link, time) {
+  movementGreenAt(link, movement, time) {
     const node = this.network.nodeById[link.to];
     if (node.control === 'priority') return true;
-    return groupGreen(node.plan, time, armGroup(link.toArm), node.offset);
+    return movementGreen(node.plan, time, node.offset, link.toArm, movement);
   }
 
   // Free length at the start of a lane after vehicles already committed to it.
@@ -182,7 +184,7 @@ export class Simulation {
 
   // Returns null when the head vehicle may enter the junction, otherwise a reason.
   entryRefusal(vehicle, link, laneIndex, now) {
-    if (!this.nodeGreen(link, now)) return 'signal';
+    if (!this.movementGreenAt(link, vehicle.moves[vehicle.leg], now)) return 'signal';
     if (now < link.nextRelease[laneIndex]) return 'headway';
     const path = this.plannedPath(vehicle, link, laneIndex);
     const priority = this.network.nodeById[link.to].control === 'priority';
@@ -234,13 +236,13 @@ export class Simulation {
       const otherId = node.inbound[arm];
       if (!otherId || otherId === link.id) continue;
       const other = this.links[otherId];
-      if (!this.nodeGreen(other, now)) continue;
       for (let laneIndex = 0; laneIndex < other.lanes.length; laneIndex++) {
         for (const v of other.lanes[laneIndex]) {
           const distance = other.length - v.position;
           if (distance > GAP_ACCEPTANCE_RANGE) break;
           if (v.moves[v.leg] === 'right' || (v === other.lanes[laneIndex][0] && other.held[laneIndex])) continue;
           if (distance / Math.max(v.speed, 0.1) > CRITICAL_GAP_SECONDS) continue;
+          if (!this.movementGreenAt(other, v.moves[v.leg], now)) continue;
           if (pathsConflict(this.network, path, this.plannedPath(v, other, laneIndex))) return true;
         }
       }
@@ -419,13 +421,17 @@ export class Simulation {
       if (boundary) { this.endCycle(link, now); this.startCycle(link, now); }
       return;
     }
-    const green = this.nodeGreen(link, now);
-    if (green && !link.wasGreen) this.startCycle(link, now);
+    // A cycle for this approach runs while any of its movements is green; only
+    // vehicles whose own movement is green are tagged, so right-turners waiting
+    // for a later right-turn phase do not count as the through phase's failure.
+    const greenMovements = link.movementTypes.filter(m => this.movementGreenAt(link, m, now));
+    const green = greenMovements.length > 0;
+    if (green && !link.wasGreen) this.startCycle(link, now, greenMovements);
     if (!green && link.wasGreen) this.endCycle(link, now);
     link.wasGreen = green;
   }
 
-  startCycle(link, now) {
+  startCycle(link, now, movements = null) {
     // Tags are unique per link and start time, so a tagged vehicle that moves on
     // to another link is never mistaken for that link's residual queue.
     link.cycleTag = `${link.id}@${now.toFixed(1)}`;
@@ -436,7 +442,7 @@ export class Simulation {
     for (const lane of link.lanes) {
       lane.forEach((v, i) => {
         const room = i === 0 ? link.length - v.position : lane[i - 1].position - lane[i - 1].length - v.position;
-        if (v.speed < QUEUE_SPEED && room <= QUEUE_SPACING) v.queueTag = link.cycleTag;
+        if (v.speed < QUEUE_SPEED && room <= QUEUE_SPACING && (!movements || movements.includes(v.moves[v.leg]))) v.queueTag = link.cycleTag;
       });
     }
   }

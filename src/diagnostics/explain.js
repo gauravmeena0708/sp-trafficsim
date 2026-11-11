@@ -1,5 +1,4 @@
-import { armGroup } from '../model/network.js';
-import { groupGreen } from '../simulation/signals.js';
+import { movementGreen } from '../simulation/signals.js';
 
 // Evidence-limited descriptions of the current state of one inbound link.
 // They name likely contributors visible in the simulation, never a proven cause.
@@ -15,7 +14,12 @@ export function explainApproach(simulation, linkId) {
     if (!descriptions.length) descriptions.push({ title: 'No current queue evidence', detail: 'No substantial queue is detected here. This does not predict conditions outside the study area.' });
     return descriptions;
   }
-  const green = groupGreen(node.plan, simulation.time, armGroup(link.toArm), node.offset);
+  const greenFor = movement => movementGreen(node.plan, simulation.time, node.offset, link.toArm, movement);
+  const green = link.movementTypes.some(greenFor);
+  // A head vehicle whose own movement is red while others from this approach go:
+  // typically a right-turner waiting for a right-turn phase.
+  const waitingTurn = link.lanes.map(lane => lane[0]).find(v => v && v.position >= link.length - 1 && !greenFor(v.moves[v.leg]));
+  if (green && waitingTurn) descriptions.push({ title: `Waiting for the ${waitingTurn.moves[waitingTurn.leg]}-turn phase`, detail: `Other movements from this approach have green, but the ${waitingTurn.moves[waitingTurn.leg]} turn is served in a different phase. In a shared lane it holds the vehicles behind it.` });
   if (link.pocketBlocked) descriptions.push({ title: 'Right-turn pocket full', detail: `The ${Math.round(link.pocket.length)} m pocket is full, so the next right-turner waits at its entrance and holds through traffic in the lane behind it. A longer pocket, more right-turn green or fewer right-turners would reduce this.` });
   const heldDownstream = link.held.some(Boolean);
   if (!green && link.queue > 0) descriptions.push({ title: 'Signal hold', detail: 'This approach is not green. Queuing during a red phase is expected; this alone does not establish a design problem.' });

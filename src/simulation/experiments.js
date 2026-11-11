@@ -6,6 +6,25 @@ export const DEMAND_LEVELS = [
   { label: 'High', multiplier: 1.25 },
 ];
 export const SWEEP_GROUPS = { eastWest: 'east–west', northSouth: 'north–south' };
+const PHASE_GROUP = /^phase:(\d+)$/;
+
+// Sweep targets: a two-phase group, or "phase:<index>" in a custom plan.
+export function sweepGroupLabel(group, signals) {
+  const match = group.match(PHASE_GROUP);
+  if (!match) return SWEEP_GROUPS[group];
+  const phase = signals?.phases?.[Number(match[1])];
+  return `phase ${Number(match[1]) + 1}${phase?.name ? ` (${phase.name})` : ''}`;
+}
+export function sweepTargets(signals) {
+  if (signals.mode === 'custom') return signals.phases.map((_, i) => `phase:${i}`);
+  return Object.keys(SWEEP_GROUPS);
+}
+// Set the swept green without mutating shared phase objects.
+export function applySweepGreen(signals, group, green) {
+  const match = group.match(PHASE_GROUP);
+  if (match) signals.phases = signals.phases.map((p, i) => i === Number(match[1]) ? { ...p, green } : p);
+  else signals[group] = green;
+}
 const MAX_SWEEP_CONFIGURATIONS = 60;
 
 export function timingCandidates(start, end, increment) {
@@ -19,7 +38,7 @@ export function timingCandidates(start, end, increment) {
 
 // Every candidate green for every requested demand multiplier, in a stable order.
 export function sweepConfigurations({ group = 'eastWest', start, end, increment, multipliers }) {
-  if (!SWEEP_GROUPS[group]) throw new Error('Unknown signal group for the sweep.');
+  if (!SWEEP_GROUPS[group] && !PHASE_GROUP.test(group)) throw new Error('Unknown signal group for the sweep.');
   if (!Array.isArray(multipliers) || !multipliers.length || !multipliers.every(m => Number.isFinite(m) && m >= 0.25 && m <= 3)) throw new Error('Demand multipliers must be between 0.25 and 3.');
   const greens = timingCandidates(start, end, increment);
   const configurations = multipliers.flatMap(multiplier => greens.map(green => ({ group, green, multiplier })));
@@ -192,9 +211,9 @@ export function runSweep(scenario, request, onProgress = () => {}) {
   const levelLabel = m => DEMAND_LEVELS.find(l => l.multiplier === m)?.label ?? `${m}×`;
   return configurations.map((sweep, i) => {
     const copy = structuredClone(scenario);
-    copy.signals[sweep.group] = sweep.green;
+    applySweepGreen(copy.signals, sweep.group, sweep.green);
     copy.demand.multiplier = sweep.multiplier;
-    copy.name = `${sweep.green}s ${SWEEP_GROUPS[sweep.group]} green${request.multipliers.length > 1 ? ` · ${levelLabel(sweep.multiplier)} demand` : ''}`;
+    copy.name = `${sweep.green}s ${sweepGroupLabel(sweep.group, scenario.signals)} green${request.multipliers.length > 1 ? ` · ${levelLabel(sweep.multiplier)} demand` : ''}`;
     const result = runReplications(copy, request.count);
     onProgress(i + 1, configurations.length);
     return { ...result, sweep };

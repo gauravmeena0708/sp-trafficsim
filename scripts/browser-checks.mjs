@@ -300,6 +300,37 @@ await check('alternatives list their changes and "until precise" comparisons giv
   await screenshot('adaptive-comparison');
 });
 
+await check('signal phase editor: presets, conflict validation, phase display and phase sweeps', async () => {
+  await evaluate(`document.getElementById('tab-design').click()`);
+  await evaluate(`(() => { const el = document.querySelector('[data-path="template"]'); el.value = 'fourArm'; el.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await evaluate(`(() => { const el = document.querySelector('[data-plan-mode]'); el.value = 'custom'; el.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  assert(await evaluate(`document.querySelectorAll('.phase-card').length === 2`), 'switching to custom should start from two equivalent phases');
+  assert(await evaluate(`document.querySelectorAll('.phase-card .movement.permitted').length > 0`), 'two-phase plan should mark permitted right turns');
+  await evaluate(`(() => { const el = document.querySelector('select[data-phase-action="preset"]'); el.value = 'protectedRights'; el.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  assert(await evaluate(`document.querySelectorAll('.phase-card').length === 4`), 'protected-rights preset should give four phases');
+  assert(await evaluate(`document.querySelectorAll('.phase-card .movement.permitted').length === 0`), 'protected right turns should not be marked as yielding');
+  assert(!(await evaluate(`document.getElementById('play-button').disabled`)), 'a valid preset should allow running');
+  const overflow = await evaluate(`(() => { const p = document.querySelector('.settings-panel'); return p.scrollWidth - p.clientWidth; })()`);
+  const culprit = overflow > 1 ? await evaluate(`(() => { const p = document.querySelector('.settings-panel').getBoundingClientRect(); return [...document.querySelectorAll('.settings-panel *')].filter(e => e.getBoundingClientRect().right > p.right + 1).slice(0, 4).map(e => e.tagName + '.' + e.className + ' ' + Math.round(e.getBoundingClientRect().width)).join(', '); })()`) : '';
+  assert(overflow <= 1, `settings panel scrolls sideways by ${overflow}px with the phase editor open: ${culprit}`);
+  // Adding north straight to the east–west through phase conflicts.
+  await evaluate(`(() => { const el = document.querySelector('[data-phase="0"][data-movement="north:straight"]'); el.checked = true; el.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  assert(await evaluate(`/Phase 1 runs .*north straight ahead.* together, but their paths cross/.test(document.getElementById('validation').textContent)`), 'conflicting movements should be rejected');
+  assert(await evaluate(`document.getElementById('play-button').disabled`), 'an invalid plan should block running');
+  assert(await evaluate(`document.activeElement?.dataset?.movement === 'north:straight'`), 'focus should stay on the toggled movement');
+  await evaluate(`(() => { const el = document.querySelector('[data-phase="0"][data-movement="north:straight"]'); el.checked = false; el.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  assert(!(await evaluate(`document.getElementById('play-button').disabled`)), 'removing the conflict should allow running again');
+  await evaluate(`document.getElementById('speed-select').value = '32'; document.getElementById('play-button').click()`);
+  await waitFor(`/East–west right turns/.test(document.getElementById('phase-label').textContent)`, 'the phase label should name the right-turn phase', 30000);
+  await evaluate(`document.getElementById('play-button').click()`);
+  await screenshot('phase-editor');
+  await evaluate(`document.getElementById('tab-compare').click()`);
+  const options = await evaluate(`[...document.getElementById('sweep-group').options].map(o => o.textContent)`);
+  assert(options.length === 4 && /Phase 2 \(East–west right turns\) green/.test(options[1]), `sweep targets: ${options.join(' / ')}`);
+  await evaluate(`document.getElementById('tab-design').click()`);
+  await evaluate(`(() => { const el = document.querySelector('[data-plan-mode]'); el.value = 'twoPhase'; el.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+});
+
 await check('demand profile editor, live queue chart and persistent-queue list', async () => {
   await evaluate(`document.getElementById('tab-design').click()`);
   await evaluate(`(() => { const el = document.querySelector('[data-profile="preset"]'); el.value = 'surge'; el.dispatchEvent(new Event('input', { bubbles: true })); })()`);
