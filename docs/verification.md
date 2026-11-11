@@ -1,5 +1,25 @@
 # Verification record
 
+## Browser checks — 11 November 2026
+
+`npm run test:browser` (`scripts/browser-checks.mjs`) runs against the built site in CI and locally. It passed 10/10 in Chrome 157 and Edge 157 on Windows, against both `dist/` and the source tree. It verifies:
+
+- **Keyboard.** Arrow, Home and End keys switch tabs. Enter starts a run and Space pauses it. Enter selects an approach. Enter opens the help dialog and Escape closes it. Tab reaches the project, tab, scenario and run controls in order, and the focused run button has a visible focus indicator.
+- **Accessible names.** Every button, text field, number field, select, checkbox, slider, tab and link in the accessibility tree has a name (design and compare views).
+- **Project files.** **Save project** downloads a schema 3 file that `parseProject` accepts. **Open project** applies an imported corridor scenario and discards fabricated results with a notice. An invalid file is rejected with an explanation and leaves the current project unchanged.
+- **Export and print.** A two-scenario comparison exports a CSV with 6 per-seed rows, and a formula-like scenario name is neutralised. **Print report** calls `window.print` with complete report metadata. Under print media, the editing UI is hidden and the results table is shown.
+- **Touch and small screens.** At 390 × 844 with touch emulation, the page does not scroll horizontally, approach buttons are at least 24 px, tapping a button selects that approach, and tapping the map selects the nearest arm.
+- **No script errors** during any of the above.
+
+One defect was found and fixed: pausing during warm-up still showed **Warm-up**. The run state now reads **Paused**, or **Ready** before the first step.
+
+**Not covered:**
+
+- Firefox and Safari (no DevTools protocol support);
+- real screen readers;
+- real touch hardware;
+- actual printed output and the operating system's file dialogs (the checks call `window.print` and set files directly).
+
 ## v0.3 network editing — 11 November 2026
 
 ### Automated checks
