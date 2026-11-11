@@ -1521,3 +1521,15 @@ li.change-assumption,li.change-run{
 .settings-panel select{
   max-width:100%
 }
+/* Selects never set the settings column's width (long option text, wider fonts). */
+.settings-panel .field{
+  min-width:0;
+  max-width:100%
+}
+.settings-panel select{
+  width:100%;
+  min-width:0
+}
+.phase-actions .field{
+  flex:1 1 100%
+}
