@@ -1,7 +1,7 @@
 import { createProject, validateScenario, parseProject, DIRECTIONS, FLEET } from './model/project.js';
 import { Simulation, STEP } from './simulation/engine.js';
 import { cycleLength } from './simulation/signals.js';
-import { timingCandidates } from './simulation/experiments.js';
+import { DEMAND_LEVELS, SWEEP_GROUPS, sweepConfigurations } from './simulation/experiments.js';
 import { explainApproach } from './diagnostics/explain.js';
 import { NetworkCanvas } from './ui/canvas.js';
 import { escapeHTML as esc, format, download, renderResults, comparisonWarnings, resultsAreStale, csvReport, printMetadata } from './ui/reports.js';
@@ -251,9 +251,11 @@ $('compare-button').addEventListener('click', () => {
 });
 $('sweep-button').addEventListener('click', () => {
   const start = Number($('sweep-start').value), end = Number($('sweep-end').value), increment = Number($('sweep-step').value);
-  try { timingCandidates(start, end, increment); }
+  const group = $('sweep-group').value;
+  const multipliers = $('sweep-demand-levels').checked ? DEMAND_LEVELS.map(l => l.multiplier) : [active().demand.multiplier];
+  try { sweepConfigurations({ group, start, end, increment, multipliers }); }
   catch (error) { notice(error.message, 'error'); return; }
-  startExperiment({ type: 'sweep', scenario: structuredClone(active()), start, end, increment, count: Number($('replications').value) }, 'East–west timing sweep');
+  startExperiment({ type: 'sweep', scenario: structuredClone(active()), group, start, end, increment, multipliers, count: Number($('replications').value) }, `${SWEEP_GROUPS[group][0].toUpperCase() + SWEEP_GROUPS[group].slice(1)} timing sweep`);
 });
 $('cancel-button').addEventListener('click', () => { stopExperiment(); $('experiment-status').textContent = `${experimentLabel} cancelled. Any displayed results are from the previous completed experiment.`; notice('Experiment cancelled.'); });
 $('csv-button').addEventListener('click', () => download('junction-results.csv', csvReport(results), 'text/csv;charset=utf-8'));

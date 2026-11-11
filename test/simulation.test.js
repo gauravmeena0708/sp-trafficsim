@@ -142,3 +142,39 @@ test('stale results are detected and CSV exports retain reproducible inputs safe
   other.demand.multiplier = 1.25;
   assert.match(comparisonWarnings([result, runReplications(other, 1)]).join(' '), /Demand differ/);
 });
+
+test('paired differences match seeds and use t-based 95% intervals', async () => {
+  const { pairedDifference, tCritical95, attachBaselineDifferences, sweepConfigurations } = await import('../src/simulation/experiments.js');
+  const base = [{ seed: 1, x: 10 }, { seed: 2, x: 12 }, { seed: 3, x: 14 }];
+  const alt = [{ seed: 3, x: 15 }, { seed: 1, x: 12 }, { seed: 2, x: 15 }];
+  const d = pairedDifference(base, alt, 'x');
+  // Differences 2, 3, 1: mean 2, sd 1, half-width t(2) / sqrt(3).
+  assert.equal(d.mean, 2);
+  assert.ok(Math.abs(d.high - d.mean - tCritical95(2) / Math.sqrt(3)) < 1e-9);
+  assert.equal(pairedDifference(base, [{ seed: 9, x: 1 }], 'x').excluded, 1);
+  assert.equal(pairedDifference(base.slice(0, 1), alt.slice(1, 2), 'x').low, null);
+
+  const s = createScenario();
+  const other = structuredClone(s); other.signals.eastWest = 60;
+  const results = attachBaselineDifferences([runReplications(s, 2), runReplications(other, 2)]);
+  assert.equal(results[0].baseline, true);
+  assert.equal(results[1].differences.accruedDelayPerRequest.n, 2);
+  const unpaired = structuredClone(s); unpaired.demand.multiplier = 1.25;
+  assert.match(attachBaselineDifferences([runReplications(s, 1), runReplications(unpaired, 1)])[1].differenceNote, /Not paired/);
+
+  const configs = sweepConfigurations({ group: 'northSouth', start: 5, end: 65, increment: 30, multipliers: [0.75, 1, 1.25] });
+  assert.equal(configs.length, 9);
+  assert.throws(() => sweepConfigurations({ group: 'northSouth', start: 5, end: 300, increment: 14, multipliers: [0.75, 1, 1.25] }), /At most 60/);
+});
+
+test('sweeps vary the chosen group and demand level without being reported stale', async () => {
+  const { runSweep, sweepFindings } = await import('../src/simulation/experiments.js');
+  const s = createScenario();
+  s.run.duration = 300;
+  const results = runSweep(s, { group: 'northSouth', start: 10, end: 70, increment: 60, multipliers: [0.75, 1.25], count: 1 });
+  assert.deepEqual(results.map(r => [r.inputs.signals.northSouth, r.inputs.demand.multiplier]), [[10, 0.75], [70, 0.75], [10, 1.25], [70, 1.25]]);
+  assert.ok(results.every(r => r.inputs.signals.eastWest === s.signals.eastWest));
+  assert.equal(resultsAreStale(results, [s]), false);
+  assert.ok(!comparisonWarnings(results).some(w => /Demand differ/.test(w)));
+  assert.equal(sweepFindings(results).best.length, 2);
+});

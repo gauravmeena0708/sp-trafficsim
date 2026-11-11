@@ -1088,3 +1088,24 @@ dialog p{
     line-height:1.7
   }
 }
+.experiment-card label.checkbox-field{
+  flex-direction:row;
+  align-items:center;
+  gap:8px;
+  margin:10px 0
+}
+.experiment-card label + label,.experiment-card label + .sweep-fields{
+  margin-top:10px
+}
+.sweep-findings{
+  padding:14px 16px;
+  border-top:1px solid var(--border);
+  font-size:12px;
+  white-space:normal
+}
+.sweep-findings h4{
+  margin-bottom:6px
+}
+.sweep-findings ul{
+  margin:0 0 8px 18px
+}

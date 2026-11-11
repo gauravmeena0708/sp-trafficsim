@@ -1,4 +1,4 @@
-import { runReplications, timingCandidates } from './experiments.js';
+import { attachBaselineDifferences, runReplications, runSweep } from './experiments.js';
 
 self.onmessage = ({ data }) => {
   try {
@@ -8,17 +8,9 @@ self.onmessage = ({ data }) => {
         self.postMessage({ type: 'progress', completed: i + 1, total: data.scenarios.length });
         return result;
       });
-      self.postMessage({ type: 'complete', results });
+      self.postMessage({ type: 'complete', results: attachBaselineDifferences(results) });
     } else if (data.type === 'sweep') {
-      const values = timingCandidates(data.start, data.end, data.increment);
-      const results = values.map((green, i) => {
-        const copy = structuredClone(data.scenario);
-        copy.signals.eastWest = green;
-        copy.name = `${green}s east–west green`;
-        const result = runReplications(copy, data.count);
-        self.postMessage({ type: 'progress', completed: i + 1, total: values.length });
-        return { ...result, green };
-      });
+      const results = runSweep(data.scenario, data, (completed, total) => self.postMessage({ type: 'progress', completed, total }));
       self.postMessage({ type: 'complete', results });
     } else throw new Error('Unknown experiment type.');
   } catch (error) { self.postMessage({ type: 'error', message: error.message }); }
