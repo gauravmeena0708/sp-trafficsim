@@ -155,11 +155,12 @@ test('model checks flag ignored demand, unused settings and shared-lane right tu
   assert.equal(modelChecks(bad)[0].level, 'error');
 });
 
-test('schema 2 projects migrate to schema 3 with empty overrides', () => {
+test('schema 2 projects migrate to the current schema with empty overrides and a flat profile', () => {
   const v2 = structuredClone(createProject().scenarios[0]);
   delete v2.approaches; delete v2.signals.junctions;
   const loaded = parseProject(JSON.stringify({ schemaVersion: 2, scenarios: [v2] }));
   assert.deepEqual(loaded.scenarios[0].approaches, {});
   assert.deepEqual(loaded.scenarios[0].signals.junctions, {});
-  assert.equal(loaded.schemaVersion, 3);
+  assert.equal(loaded.schemaVersion, 4);
+  assert.deepEqual(loaded.scenarios[0].demand.profile.factors, [1]);
 });

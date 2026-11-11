@@ -59,6 +59,16 @@ export function modelChecks(s) {
       if (demand > indicative) findings.push({ level: 'warning', title: `${link.label}: demand may exceed discharge`, detail: `${Math.round(demand)} veh/h arrive, against an indicative ${Math.round(indicative)} veh/h (${INDICATIVE_LANE_FLOW} veh/h per lane × ${plan[group]} s green ÷ ${cycleLength(plan)} s cycle). This rule of thumb is not a model result; expect queues to grow through the run.`, target: link.id });
     }
   }
+  const { period, factors } = s.demand.profile;
+  if (factors.length > 1 || factors[0] !== 1) {
+    // Average factor actually applied over the run (the last factor holds after the profile ends).
+    let weighted = 0;
+    for (let t = 0; t < s.run.duration; t += 10) weighted += factors[Math.min(factors.length - 1, Math.floor(t / period))];
+    const mean = weighted / Math.ceil(s.run.duration / 10);
+    if (Math.abs(mean - 1) > 0.02) findings.push({ level: 'info', title: `Demand profile adds ${mean > 1 ? 'more' : 'less'} demand overall`, detail: `Over this run the profile averages ${mean.toFixed(2)}× the entered veh/h, so total demand differs from a constant profile. Compare like with like, or rescale the factors to average 1.` });
+    const span = period * factors.length;
+    if (factors.length > 1 && span < s.run.duration) findings.push({ level: 'info', title: 'Profile ends before the run does', detail: `The profile covers ${span} s of a ${s.run.duration} s run; its last factor (${factors.at(-1)}×) holds for the rest.` });
+  }
   if (s.run.warmup < 120) findings.push({ level: 'info', title: 'Short warm-up', detail: `A ${s.run.warmup} s warm-up measures traffic while the network is still filling. Consider at least one or two signal cycles.` });
   return findings;
 }

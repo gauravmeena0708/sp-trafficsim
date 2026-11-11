@@ -1,8 +1,22 @@
 export const DIRECTIONS = ['north', 'east', 'south', 'west'];
 import { TEMPLATES, approachSettings, compileNetwork, configurableApproaches } from './network.js';
 
-export const ENGINE_VERSION = 'illustrative-network/0.3.0';
-export const SCHEMA_VERSION = 3;
+export const ENGINE_VERSION = 'illustrative-network/0.4.0';
+export const SCHEMA_VERSION = 4;
+
+// Demand over time: each entry's base veh/h is multiplied by the factor for the
+// current period. Presets are written out as explicit factors so a saved
+// scenario reproduces exactly; they span the run duration in six periods.
+export const PROFILE_PRESETS = {
+  flat: { label: 'Constant', shape: [1] },
+  peak: { label: 'Peak in the middle', shape: [0.6, 0.9, 1.3, 1.5, 1.1, 0.6] },
+  surge: { label: 'Short surge', shape: [0.8, 0.8, 2, 0.8, 0.8, 0.8] },
+  rising: { label: 'Steadily rising', shape: [0.6, 0.8, 1, 1.2, 1.4, 1.6] },
+};
+export function profilePreset(preset, duration) {
+  const shape = PROFILE_PRESETS[preset]?.shape ?? [1];
+  return { preset, period: shape.length === 1 ? 900 : Math.max(60, Math.round(duration / shape.length)), factors: [...shape] };
+}
 export const APPROACH_FIELDS = {
   lanes: { label: 'Lanes', min: 1, max: 3, integer: true },
   speed: { label: 'Speed limit (km/h)', min: 20, max: 80 },
@@ -27,7 +41,7 @@ export function createScenario(name = 'Existing junction') {
     geometry: { length: 250, lanes: 2, speed: 40, spacing: 200 },
     turning: { left: 0, right: 0 },
     approaches: {},
-    demand: { north: 450, east: 800, south: 450, west: 800, multiplier: 1 },
+    demand: { north: 450, east: 800, south: 450, west: 800, multiplier: 1, profile: profilePreset('flat', 600) },
     signals: { eastWest: 40, northSouth: 25, yellow: 3, allRed: 2, offset: 0, junctions: {} },
     fleet: { twoWheeler: 30, auto: 10, car: 50, bus: 5, truck: 5 },
     run: { duration: 600, warmup: 60, seed: 42 },
@@ -57,6 +71,14 @@ export function validateScenario(s) {
   if ((s.turning?.left ?? 0) + (s.turning?.right ?? 0) > 100) errors.push('Left- and right-turn shares cannot exceed 100% together.');
   for (const d of DIRECTIONS) range(s.demand?.[d], 0, 3600, `${d} demand`);
   range(s.demand?.multiplier, 0.25, 3, 'Demand multiplier');
+  const profile = s.demand?.profile;
+  if (!profile || typeof profile !== 'object') errors.push('Demand profile is missing.');
+  else {
+    if (![...Object.keys(PROFILE_PRESETS), 'custom'].includes(profile.preset)) errors.push('Choose a supported demand profile.');
+    range(profile.period, 60, 3600, 'Demand profile period', true);
+    if (!Array.isArray(profile.factors) || profile.factors.length < 1 || profile.factors.length > 48) errors.push('A demand profile needs 1–48 period factors.');
+    else if (profile.factors.some(f => !Number.isFinite(f) || f < 0 || f > 3)) errors.push('Demand profile factors must each be between 0 and 3.');
+  }
   range(s.signals?.eastWest, 5, 300, 'East–west green');
   range(s.signals?.northSouth, 5, 300, 'North–south green');
   range(s.signals?.yellow, 3, 10, 'Yellow interval');
@@ -108,13 +130,14 @@ export function migrateScenario(s, fromVersion) {
   let next = s;
   if (fromVersion < 2) next = { ...next, template: 'fourArm', geometry: { ...next.geometry, spacing: 200 }, turning: { left: 0, right: 0 } };
   if (fromVersion < 3) next = { ...next, approaches: {}, signals: { ...next.signals, junctions: {} } };
+  if (fromVersion < 4) next = { ...next, demand: { ...next.demand, profile: profilePreset('flat', next.run?.duration ?? 600) } };
   return next;
 }
 
 export function parseProject(text) {
   if (text.length > 5_000_000) throw new Error('Project is larger than the 5 MB import limit.');
   const project = JSON.parse(text);
-  if (![1, 2, SCHEMA_VERSION].includes(project?.schemaVersion)) throw new Error('Unsupported project version.');
+  if (![1, 2, 3, SCHEMA_VERSION].includes(project?.schemaVersion)) throw new Error('Unsupported project version.');
   if (Array.isArray(project.scenarios)) project.scenarios = project.scenarios.map(s => migrateScenario(s, project.schemaVersion));
   if (!Array.isArray(project.scenarios) || project.scenarios.length < 1 || project.scenarios.length > 30) throw new Error('A project must contain 1–30 scenarios.');
   const ids = new Set();
