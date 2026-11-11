@@ -1,0 +1,16 @@
+{
+  "name": "sp-trafficsim",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "An illustrative, browser-based traffic planning workbench for GitHub Pages.",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev": "node scripts/serve.mjs",
+    "test": "node --test --experimental-test-isolation=none",
+    "check": "node --experimental-vm-modules scripts/check.mjs",
+    "build": "node scripts/build.mjs",
+    "preview": "node scripts/serve.mjs dist",
+    "benchmark": "node scripts/benchmark.mjs"
+  }
+}

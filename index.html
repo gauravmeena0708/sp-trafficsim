@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#193e37">
+  <meta name="description" content="Explore traffic demand, signal timing and junction alternatives in an illustrative traffic planning workbench.">
+  <title>Junction — Traffic planning workbench</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%23193e37'/%3E%3Cpath d='M18 7v26M7 18h26M24 7v26M7 24h26' stroke='%23d6edb8' stroke-width='3'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./styles.css">
+  <script type="module" src="./src/main.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#workspace">Skip to workspace</a>
+  <header class="app-header">
+    <a class="brand" href="./" aria-label="Junction home"><span class="brand-icon" aria-hidden="true">╬</span><span>junction<span class="brand-dot">.</span></span></a>
+    <span class="header-divider"></span><span class="product-label">TRAFFIC PLANNING WORKBENCH</span>
+    <div class="header-actions"><span class="prototype-tag"><span></span> Illustrative prototype</span><button id="help-button" class="icon-button" aria-label="About this model">?</button></div>
+  </header>
+
+  <main>
+    <section class="study-heading">
+      <div><div class="eyebrow">YOUR PLANNING DESK <span>/</span> STUDY 001</div><h1>A better junction starts here.</h1><p>Test a change. Understand the trade-offs. Plan with a clearer picture.</p></div>
+      <div class="project-actions"><button class="button secondary" id="import-button">Open project</button><input id="import-file" type="file" accept="application/json,.json" hidden><button class="button primary" id="save-button"><span aria-hidden="true">↓</span> Save project</button></div>
+    </section>
+
+    <div class="workspace-toolbar">
+      <div class="view-tabs" role="tablist" aria-label="Workspace view"><button id="tab-design" role="tab" aria-selected="true" aria-controls="design-panel" data-view="design">01 <span>Design & simulate</span></button><button id="tab-compare" role="tab" aria-selected="false" aria-controls="compare-panel" data-view="compare" tabindex="-1">02 <span>Compare options</span></button></div>
+      <span class="local-note"><span class="status-dot"></span> Browser-local · no account needed</span>
+    </div>
+
+    <section id="design-panel" role="tabpanel" aria-labelledby="tab-design" class="design-grid">
+      <aside class="settings-panel" aria-label="Scenario settings">
+        <div class="panel-heading"><span class="eyebrow">SCENARIO</span><button id="duplicate-button" class="text-button">+ Duplicate</button></div>
+        <label for="scenario-select" class="sr-only">Active scenario</label><select id="scenario-select" class="scenario-select"></select>
+        <form id="settings-form" novalidate></form>
+        <div id="validation" class="validation" role="alert" hidden></div>
+      </aside>
+
+      <div id="workspace" class="simulation-panel" tabindex="-1">
+        <div class="canvas-heading"><div><span class="live-dot"></span><strong>Junction overview</strong><span class="subtle"> · left-hand traffic</span></div><button id="reset-button" class="text-button">↺ Reset run</button></div>
+        <div class="map-wrap"><canvas id="network-canvas" aria-label="Animated four-arm junction. Select an approach using the approach buttons below." role="img"></canvas><div class="map-note"><span class="map-note-symbol">⊞</span><div><strong>Four-arm junction</strong><span>Concept layout · straight-through movements</span></div></div><div class="compass" aria-hidden="true">N<br>↑</div><div class="map-legend"><span><i style="background:#54b8bd"></i> Cars</span><span><i style="background:#d48b37"></i> Two-wheelers</span><span><i style="background:#456cba"></i> Buses</span><span><i style="background:#9c78cc"></i> Autos</span><span><i style="background:#8a929e"></i> Trucks</span></div></div>
+        <div class="playback"><button id="play-button" class="button primary play-button">▶ Run simulation</button><span id="simulation-time" class="mono">00:00 / 10:00</span><div class="timeline" role="progressbar" aria-label="Simulation progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="timeline-fill"></span></div><label class="speed-control">Speed <select id="speed-select"><option value="1">1×</option><option value="4">4×</option><option value="8" selected>8×</option><option value="16">16×</option><option value="32">32×</option></select></label></div>
+        <div class="phase-strip"><span id="phase-label">East–west green</span><span id="phase-countdown" class="mono">40s remaining</span><span class="subtle" id="cycle-label">Cycle: 75s</span></div>
+      </div>
+
+      <aside class="insights-panel" aria-label="Live results and explanations">
+        <div class="panel-heading"><span class="eyebrow">LIVE SNAPSHOT</span><span id="run-state" class="small-tag">Ready</span></div>
+        <h2>How is traffic moving?</h2><p class="panel-description">Watch the whole picture, not just the green light.</p>
+        <div class="metric-pair"><div><span class="metric-label">Completed trips</span><strong id="metric-completed">0</strong><span class="metric-unit">all departures</span></div><div><span class="metric-label">Longest queue</span><strong id="metric-queue">0 <small>m</small></strong><span class="metric-unit">after warm-up</span></div></div>
+        <div class="accounting"><div><span>Requested departures</span><strong id="metric-requested">0</strong></div><div><span>Vehicles in network</span><strong id="metric-network">0</strong></div><div><span>Waiting outside</span><strong id="metric-waiting">0</strong></div></div>
+        <div class="insight-divider"></div><div class="eyebrow">APPROACH INSPECTOR</div><div class="approach-buttons" role="group" aria-label="Inspect approach"><button data-direction="north">N</button><button data-direction="east">E</button><button data-direction="south">S</button><button data-direction="west" aria-pressed="true">W</button></div>
+        <h3 id="approach-title">West approach</h3><div id="diagnostic-list"></div>
+        <div class="model-note"><span aria-hidden="true">ⓘ</span><p><strong>A planning sketch, not a forecast.</strong> This first model has straight-through traffic and fixed-time signals. No turns, roundabouts, bus stops, pedestrians, or lane filtering yet.</p></div>
+      </aside>
+    </section>
+
+    <section id="compare-panel" role="tabpanel" aria-labelledby="tab-compare" hidden>
+      <div class="comparison-header"><div class="eyebrow">CONTROLLED EXPERIMENTS</div><h2>Give every option a fair test.</h2><p>Repeat runs with paired random seeds. Compare delays alongside queues and unserved demand.</p></div>
+      <div class="experiment-grid">
+        <section class="experiment-card"><span class="experiment-number">01 / ALTERNATIVES</span><h3>Compare saved scenarios</h3><p>Duplicate a scenario, change its layout or timings, then compare every option. Differing demand and run assumptions are flagged.</p><label>Replications per scenario <select id="replications"><option value="3">3 runs · initial exploration</option><option value="5">5 runs</option><option value="10">10 runs</option></select></label><button id="compare-button" class="button primary">Compare scenarios <span aria-hidden="true">↗</span></button></section>
+        <section class="experiment-card"><span class="experiment-number">02 / SIGNAL TIMING</span><h3>Find a useful green-time range</h3><p>Sweep east–west green from 5 to 300 seconds. Keep north–south green fixed and compare the trade-offs.</p><div class="sweep-fields"><label>From (s)<input id="sweep-start" type="number" min="5" max="300" value="5"></label><label>To (s)<input id="sweep-end" type="number" min="5" max="300" value="300"></label><label>Step (s)<input id="sweep-step" type="number" min="1" max="295" value="30"></label></div><button id="sweep-button" class="button secondary">Run timing sweep <span aria-hidden="true">↗</span></button></section>
+      </div>
+      <div class="results-heading"><div><h3>Experiment results</h3><p id="experiment-status" role="status">Run a comparison or timing sweep to see results.</p></div><div class="project-actions"><button id="cancel-button" class="button secondary" hidden>Cancel</button><button id="csv-button" class="button secondary" disabled>Export CSV</button><button id="report-button" class="button secondary" disabled>Print report</button></div></div>
+      <div id="comparison-warning" class="comparison-warning" hidden></div><div id="results-chart" class="chart-card" hidden></div><div id="results-table" class="results-table"><div class="empty-state"><span aria-hidden="true">▥</span><h3>A decision deserves a comparison.</h3><p>Your scenarios and timing experiments will appear here.</p></div></div>
+      <p class="results-footnote">Results show the mean ± sample standard deviation across seeds, not confidence intervals. Initial replications are exploratory. Completed-trip journey times exclude unfinished trips; always read them alongside entry waiting and completion counts. This prototype does not choose a statistically sufficient replication count.</p>
+    </section>
+    <div id="notice" class="notice" role="status" aria-live="polite">Ready to explore. Adjust your inputs, then run a simulation.</div>
+    <footer><span>JUNCTION / EARLY ACCESS</span><span>Model v0.1 · illustrative results · units in metres & seconds</span></footer>
+  </main>
+
+  <dialog id="about-dialog"><div class="dialog-heading"><span class="eyebrow">ABOUT THIS MODEL</span><button id="close-help" class="icon-button" aria-label="Close">×</button></div><h2>Explore an idea.<br>Then validate it.</h2><p>Junction is an early planning prototype. Vehicles follow explicit lanes through a four-arm junction with two fixed-time signal groups. Opposing traffic moves straight through; turning, crossing and lane-changing behaviour are not modelled.</p><p>Queue estimates use vehicles travelling below 2 m/s and include distance to the furthest slow vehicle. Warm-up traffic remains in the simulation, but journey and accrued-delay measures use departures requested after warm-up.</p><p>Accrued delay compares elapsed movement with each vehicle’s desired speed, includes boundary waiting, and includes unfinished demand. No field calibration has been performed. Adaptive density-responsive timing, editable connected networks, population-to-trip estimation and roundabouts are planned phases.</p><button id="close-help-primary" class="button primary">Back to the workbench</button></dialog>
+</body>
+</html>
