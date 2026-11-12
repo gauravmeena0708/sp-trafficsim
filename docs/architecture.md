@@ -22,6 +22,26 @@ The hosting target is GitHub Pages. The workbench uses native browser modules, C
 
 SUMO's [sublane documentation](https://sumo.dlr.de/docs/Simulation/SublaneModel.html) remains the reference for future lateral behaviour. Do not assume this prototype implements equivalent physics.
 
+## Decision 003 (12 November 2026): a dependency-free 3D view on Canvas 2D
+
+The spec (§14) asks for a maintained browser 3D renderer to be evaluated before adoption. The options considered:
+
+- **three.js** (MIT) and **Babylon.js** (Apache-2.0) are mature WebGL renderers with lighting, depth buffers and instancing. Either would add the project's first runtime dependency, at several hundred kilobytes of minified script. Each would also need a vendored copy for offline and subpath hosting, a version-pinning and update policy, and a separate WebGL fallback path.
+- **Raw WebGL** avoids a dependency, but needs shaders, buffers and context-loss handling for a scene that is small: at most eight junctions and a few hundred box-shaped vehicles.
+- **Perspective projection onto Canvas 2D** (chosen):
+  - roughly 700 lines in `src/ui/scene3d.js`, with no dependency and no assets;
+  - the same browser support as the 2D plan;
+  - a 2D fallback that needs no other graphics stack.
+
+  It clips polygons to the near plane, culls back faces of vehicle boxes, shades faces with a fixed light, and paints solid objects far to near.
+
+The measured cost is low. On a 1200 × 700 canvas, the 2 × 2 grid with 203 vehicles draws in a median of about 3 ms (90th percentile under 5 ms) at full detail, and 1.0 ms at reduced detail. That is in headless Chrome 157 with software rendering (`--disable-gpu`); see the browser checks.
+
+The frame budget is 50 ms on that workload, which the browser checks enforce. Revisit this decision if the 3D view needs:
+- depth-correct overlap;
+- textured scenery or terrain;
+- networks much larger than eight junctions.
+
 ## Boundaries
 
 - `model/project.js`: versioned scenarios, validation, schema migration, import. No DOM.
@@ -29,7 +49,7 @@ SUMO's [sublane documentation](https://sumo.dlr.de/docs/Simulation/SublaneModel.
 - `model/checks.js`: pre-run model checks, separating blocking errors from assumptions to review. No DOM.
 - `simulation`: consumes a scenario, steps time, and produces snapshots and results. No DOM.
 - `diagnostics`: interprets recorded state without claiming exact causal proof.
-- `ui`: renders any compiled network and exports results without changing physics.
+- `ui`: renders any compiled network (2D plan in `canvas.js`, 3D view in `scene3d.js`) and exports results without changing physics.
 - `main`: connects browser controls and persistence to those modules.
 - `worker`: runs the same engine for repeated-seed experiments without blocking the workbench.
 
@@ -37,7 +57,7 @@ Keep physics in `simulation` and graph construction in `model/network.js`. Maint
 
 ## Persistence and security
 
-Schema version 3 supports up to 30 scenarios and project imports up to 5 MB. Schema 1 and 2 projects and browser storage are migrated on load. Imports validate all required numerical ranges, template names, per-approach and per-junction settings, pocket lengths and unique IDs. Imported reports are discarded rather than accepted with a fabricated validated status. Model status is always illustrative in this release.
+Schema version 7 adds project-level camera bookmarks, which are sanitised on import and never affect scenario inputs. Projects support up to 30 scenarios and project imports up to 5 MB. Schema 1 and 2 projects and browser storage are migrated on load. Imports validate all required numerical ranges, template names, per-approach and per-junction settings, pocket lengths and unique IDs. Imported reports are discarded rather than accepted with a fabricated validated status. Model status is always illustrative in this release.
 
 Project names are escaped before HTML insertion. CSV cells guard against spreadsheet formula prefixes. The development server binds only to loopback and checks resolved paths. Generated output is ignored by Git. No analytics, remote fonts, external scripts, secrets, or storage services are used.
 

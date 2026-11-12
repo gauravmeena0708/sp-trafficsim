@@ -49,6 +49,8 @@ Pass `--browser <path>` to choose a browser, or `--source` to test the source tr
    - Each alternative lists exactly what it changes from the baseline, and flags demand or run changes that make it more than an infrastructure-only comparison.
 7. Compare delay with completed trips and waiting demand. Read the charts over time for queues that build and never clear, and the persistent-queue columns. Export per-seed CSV, print a report, or download the complete project JSON.
 
+Switch the map to **3D view** to watch the same run at true scale. Drag to orbit, right-drag or Shift-drag to pan, and scroll or pinch to zoom. Use the presets (fit, overview, overhead, street level) or the keyboard: arrow keys pan, Shift+arrows orbit and tilt, and + and − zoom. Click a road to inspect it, or a vehicle to follow it. Overlays show queues, signal states and speed classes. Save named camera views with the project. The camera never changes results.
+
 Under **Traffic demand → Demand over time**, choose a preset (mid-run peak, short surge, steadily rising) or enter your own factors per period to model a peak rather than a flat hour. While a run plays, the inspector charts the selected approach's queue and lists **persistent queues**: approaches where vehicles waiting at the start of green were still there at its end, two cycles running.
 
 Valid scenario inputs are automatically saved in this browser. Download project files for portable backups. Imported result claims are discarded; rerun experiments to produce trusted local outputs. No project data is sent to a server. Static hosting will still receive normal page/asset requests.
@@ -90,6 +92,7 @@ src/
     worker.js              Background comparisons and sweeps
   diagnostics/explain.js   Evidence-limited queue explanations
   ui/canvas.js             Schematic rendering of any compiled network
+  ui/scene3d.js            Navigable 3D view (Canvas 2D projection, no dependencies)
   ui/reports.js            Comparison display, CSV, print metadata
   main.js                  UI state and feature integration
 scripts/                   Dependency-free development/build/check tools

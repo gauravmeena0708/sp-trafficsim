@@ -1628,3 +1628,171 @@ li.change-assumption,li.change-run{
 .grid-node-actions .field{
   flex:1 1 110px
 }
+/* Map view switch and 3D view controls */
+.canvas-actions{
+  display:flex;
+  align-items:center;
+  gap:14px
+}
+.view-switch{
+  display:inline-flex;
+  border:1px solid var(--border);
+  border-radius:6px;
+  overflow:hidden
+}
+.view-switch button{
+  background:#fff;
+  border:0;
+  padding:6px 10px;
+  font-size:10px;
+  color:#7f8d76;
+  min-height:28px
+}
+.view-switch button+button{
+  border-left:1px solid var(--border)
+}
+.view-switch button[aria-pressed=true]{
+  background:#eaf0df;
+  color:#456037;
+  font-weight:600
+}
+.view-switch button:disabled{
+  color:#b8c0b3;
+  cursor:not-allowed
+}
+.scene-canvas{
+  touch-action:none;
+  cursor:grab
+}
+.scene-canvas:active{
+  cursor:grabbing
+}
+.scene-canvas:focus-visible{
+  outline:2px solid #6f9a55;
+  outline-offset:-2px
+}
+#compass-needle{
+  display:inline-block;
+  transition:transform .12s ease-out
+}
+.scene-controls{
+  background:#fafbf7;
+  border-top:1px solid var(--border);
+  padding:10px 16px 8px;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  font-size:10px
+}
+.scene-row{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px 16px
+}
+.scene-group{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:4px
+}
+.scene-controls button,.scene-controls select,.scene-controls input:not([type=checkbox]){
+  border:1px solid var(--border);
+  background:#fff;
+  border-radius:5px;
+  min-width:28px;
+  min-height:28px;
+  padding:0 8px;
+  font-size:10px;
+  color:#4f5f49
+}
+.scene-controls button:disabled{
+  color:#b8c0b3;
+  cursor:not-allowed
+}
+.scene-controls button[aria-pressed=true]{
+  background:#eaf0df;
+  border-color:#bdceaa;
+  font-weight:600
+}
+.scene-overlays{
+  border:0;
+  padding:0;
+  margin:0;
+  display:flex;
+  flex-wrap:wrap;
+  gap:4px 12px;
+  align-items:center
+}
+.scene-overlays legend{
+  float:left;
+  font-weight:600;
+  color:#51664a;
+  margin-right:4px
+}
+.scene-overlays label,.scene-detail{
+  display:inline-flex;
+  align-items:center;
+  gap:4px;
+  color:#5d6b57
+}
+.bookmarks input{
+  width:130px
+}
+.vehicle-group{
+  gap:8px
+}
+.vehicle-status{
+  color:#5d6b57;
+  font-variant-numeric:tabular-nums
+}
+.speed-legend{
+  display:flex;
+  flex-wrap:wrap;
+  gap:4px 12px;
+  color:#5d6b57
+}
+.speed-legend .legend-title{
+  font-weight:600;
+  color:#51664a
+}
+.speed-legend span{
+  display:inline-flex;
+  align-items:center;
+  gap:5px
+}
+.speed-legend i{
+  display:inline-block;
+  width:8px;
+  height:8px;
+  border-radius:2px
+}
+.scene-help{
+  margin:0;
+  color:#8a9685;
+  font-size:9px;
+  line-height:1.5
+}
+@media(max-width:640px){
+  .canvas-heading{
+    height:auto;
+    min-height:57px;
+    flex-wrap:wrap;
+    gap:6px;
+    padding:8px 14px
+  }
+  .bookmarks input{
+    width:110px
+  }
+}
+.map-wrap.three .map-legend span{
+  background:rgba(250,251,246,.9);
+  padding:2px 6px;
+  border-radius:4px
+}
+.map-wrap.three .map-note > div,.map-wrap.three .compass{
+  background:rgba(250,251,246,.88);
+  border-radius:5px;
+  padding:2px 6px 4px
+}
