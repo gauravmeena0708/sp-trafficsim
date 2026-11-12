@@ -49,10 +49,17 @@ async function startBrowser(path) {
   const profile = join(work, 'profile');
   const flags = ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check', `--user-data-dir=${profile}`, '--remote-debugging-port=0', 'about:blank'];
   if (process.env.CI) flags.unshift('--no-sandbox');
-  children.push(spawn(path, flags, { stdio: 'ignore' }));
+  const child = spawn(path, flags, { stdio: 'ignore' });
+  children.push(child);
+  // A cold browser on a busy CI runner can take well over 10 s to open its port.
   const portFile = join(profile, 'DevToolsActivePort');
-  for (let i = 0; i < 200 && !existsSync(portFile); i++) await wait(50);
-  const port = readFileSync(portFile, 'utf8').split('\n')[0];
+  let port = '';
+  for (let i = 0; i < 1200 && !port; i++) {
+    if (child.exitCode !== null) throw new Error(`The browser exited with code ${child.exitCode} before opening its debugging port.`);
+    if (existsSync(portFile)) port = readFileSync(portFile, 'utf8').split('\n')[0].trim();
+    if (!port) await wait(50);
+  }
+  if (!port) throw new Error('The browser did not open its debugging port within 60 seconds.');
   let version;
   for (let i = 0; i < 40 && !version; i++) { try { version = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json(); } catch { await wait(100); } }
   const pages = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
