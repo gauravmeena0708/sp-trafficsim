@@ -35,12 +35,12 @@ The planner places junctions on whole-number grid cells and chooses each junctio
   - some junctions are not connected to the rest;
   - traffic on some road could not reach an exit without a U-turn.
 - **Signals.** Every grid junction is signalised and runs the shared plan, with its own offset (0–600 s) delaying the start of its plan. Two-phase per-junction greens work as on the corridor. A custom phase plan may list any movement offered at some junction; a junction without that movement ignores it.
-- **Demand.** The directional veh/h apply in full to every boundary approach facing that way. A model check says how many approaches share each direction.
+- **Demand.** The directional veh/h apply in full to every boundary approach facing that way, unless the approach has its own demand. A model check says how many approaches share each direction.
 - **Naming.** Boundary approaches are named after their junction (`A west approach`, link `A-west`); links between junctions are `A → B`. Traffic keeps left. Lane 0 is the kerbside lane and the highest lane index is the median lane. The map is a schematic, not a surveyed layout. Lane widths and junction boxes are drawn wider than the longitudinal scale for legibility; the scale bar shows distance along roads.
 
 ### Per-approach settings
 
-Any approach (boundary or corridor link) can override lanes (1–3), speed limit, length (boundary approaches only), left and right turning shares, and a right-turn pocket length. A blank setting uses the shared value. Exit roads always use the shared lane count and speed. Junction boxes are sized for the widest approach.
+Any approach (boundary or corridor link) can override lanes (1–3), speed limit, length (boundary approaches only), left and right turning shares, and a right-turn pocket length. A boundary approach can also have its own demand (0–3600 veh/h), which replaces the directional value for that approach only; the demand multiplier and profile still apply. Arrival streams are seeded per approach, so changing one approach's demand leaves every other approach's arrivals unchanged under paired seeds. A blank setting uses the shared value. Exit roads always use the shared lane count and speed. Junction boxes are sized for the widest approach.
 
 ### Right-turn pockets
 

@@ -27,9 +27,9 @@ function describe(path) {
   if (head === 'geometry') return { kind: 'design', label: { length: 'Approach length (shared)', lanes: 'Lanes per direction (shared)', speed: 'Speed limit (shared)', spacing: 'Link length between junctions' }[a] ?? a, unit: { length: 'm', spacing: 'm', speed: 'kmh' }[a] };
   if (head === 'approaches') {
     const field = APPROACH_FIELDS[b];
-    const unit = { length: 'm', pocket: 'm', speed: 'kmh', left: 'pct', right: 'pct' }[b];
-    // Turning shares describe demand, not layout.
-    return { kind: b === 'left' || b === 'right' ? 'assumption' : 'design', label: `${approachName(a)}: ${(field?.label ?? b).replace(/ \(.*\)$/, '').toLowerCase()}`, unit };
+    const unit = { length: 'm', pocket: 'm', speed: 'kmh', left: 'pct', right: 'pct', demand: 'vph' }[b];
+    // Turning shares and demand are assumptions, not layout.
+    return { kind: ['left', 'right', 'demand'].includes(b) ? 'assumption' : 'design', label: `${approachName(a)}: ${(field?.label ?? b).replace(/ \(.*\)$/, '').toLowerCase()}`, unit };
   }
   if (head === 'signals') {
     if (a === 'junctions') return { kind: 'design', label: `Junction ${b} ${GROUP[c] ?? c} green`, unit: 's' };

@@ -25,6 +25,7 @@ export const APPROACH_FIELDS = {
   left: { label: 'Left turn (%)', min: 0, max: 100 },
   right: { label: 'Right turn (%)', min: 0, max: 100 },
   pocket: { label: 'Right-turn pocket (m)', min: 0, max: 200 },
+  demand: { label: 'Demand (veh/h)', min: 0, max: 3600, entryOnly: true },
 };
 export const FLEET = {
   twoWheeler: { label: 'Two-wheelers', length: 2, speedFactor: 1, acceleration: 2.2, occupancy: 1.2, colour: '#d48b37' },

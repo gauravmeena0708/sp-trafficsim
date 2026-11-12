@@ -44,7 +44,8 @@ The full Phase 1 in the product plan is large. Deliver it in this order, so each
 ### Next: free-form editing
 
 - [x] Grid network editor: place and connect up to 8 signalised junctions on a grid, with per-junction offsets and connectivity checks (arms facing nothing, crossing roads, disconnected junctions, roads with no exit).
-- [ ] Free-form geometry: angled and curved roads, two-arm bends, priority (give-way) and unsignalised junctions within a network; per-approach demand on grid boundaries.
+- [ ] Free-form geometry: angled and curved roads, two-arm bends, priority (give-way) and unsignalised junctions within a network.
+- [x] Per-approach demand on any boundary approach (overrides the directional value; arrivals elsewhere stay paired).
 - [x] Custom signal phase plans: movement-level greens, protected/permitted right turns, conflict validation, presets, phase sweeps.
 - [ ] Left-turn pockets; per-junction custom plans and clearance times; overlapping movements between phases.
 - [ ] Roundabout geometry options (radius, entry width) and multi-lane roundabouts.

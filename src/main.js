@@ -4,7 +4,7 @@ import { modelChecks } from './model/checks.js';
 import { changeSummary, changeText, scenarioChanges } from './model/changes.js';
 import { Simulation, STEP } from './simulation/engine.js';
 import { PHASE_PRESETS, cycleLength, phasePreset } from './simulation/signals.js';
-import { ARM_ORDER, GRID, TEMPLATES, analysePlanPhase, approachSettings, compileNetwork, configurableApproaches, defaultLayout, gridNeighbour, inboundLinks, layoutErrors, movementLabel, planMovements } from './model/network.js';
+import { ARM_ORDER, GRID, TEMPLATES, analysePlanPhase, approachSettings, compileNetwork, configurableApproaches, defaultLayout, entryDemand, gridNeighbour, inboundLinks, layoutErrors, movementLabel, planMovements } from './model/network.js';
 import { DEMAND_LEVELS, PRECISION, sweepConfigurations, sweepGroupLabel, sweepTargets } from './simulation/experiments.js';
 import { explainApproach } from './diagnostics/explain.js';
 import { NetworkCanvas } from './ui/canvas.js';
@@ -62,7 +62,7 @@ function approachSection(network) {
   if (!approaches.some(l => l.id === editingApproach)) editingApproach = approaches[0].id;
   const link = network.byId[editingApproach];
   const own = s.approaches[link.id] ?? {};
-  const shared = { lanes: s.geometry.lanes, speed: s.geometry.speed, length: s.geometry.length, left: s.turning.left, right: s.turning.right, pocket: 0 };
+  const shared = { lanes: s.geometry.lanes, speed: s.geometry.speed, length: s.geometry.length, left: s.turning.left, right: s.turning.right, pocket: 0, demand: s.demand[link.demandKey] };
   const roundabout = s.template === 'roundabout';
   const signalised = network.nodeById[link.to].control === 'signal';
   const fields = Object.entries(APPROACH_FIELDS).filter(([key, f]) => !(f.entryOnly && link.kind !== 'entry') && !(roundabout && key === 'lanes') && !(key === 'pocket' && !signalised));
@@ -70,7 +70,7 @@ function approachSection(network) {
   return `<section class="settings-section"><div class="section-title"><h3>Approach settings</h3><span class="section-number">02</span></div>
       <label class="field">Approach<select id="approach-edit">${approaches.map(l => `<option value="${esc(l.id)}" ${l.id === link.id ? 'selected' : ''}>${esc(l.label)}${s.approaches[l.id] ? ' · customised' : ''}</option>`).join('')}</select></label>
       <div class="input-grid">${fields.map(([key, f]) => `<label class="field"><span>${esc(f.label)}</span><input type="number" data-override="${key}" value="${own[key] ?? ''}" placeholder="${shared[key]} (shared)" min="${f.min}" max="${f.max}"></label>`).join('')}</div>
-      <p class="field-hint">Leave a field blank to use the shared value. Effective here: ${effective.lanes} lane${effective.lanes > 1 ? 's' : ''}, ${effective.speed} km/h, ${effective.left}% left, ${effective.right}% right${effective.pocket ? `, ${effective.pocket} m right-turn pocket` : ''}. A pocket adds a median lane for right-turners at the stop line; when it is full they wait at its entrance and block the lane behind them.</p>
+      <p class="field-hint">Leave a field blank to use the shared value. Effective here: ${link.kind === 'entry' ? `${entryDemand(s, link)} veh/h, ` : ''}${effective.lanes} lane${effective.lanes > 1 ? 's' : ''}, ${effective.speed} km/h, ${effective.left}% left, ${effective.right}% right${effective.pocket ? `, ${effective.pocket} m right-turn pocket` : ''}. A pocket adds a median lane for right-turners at the stop line; when it is full they wait at its entrance and block the lane behind them.</p>
       ${s.approaches[link.id] ? '<button type="button" class="text-button" id="clear-approach">Use shared values for this approach</button>' : ''}
     </section>`;
 }
@@ -178,7 +178,7 @@ function renderSettings() {
       ${active().signals.mode === 'twoPhase' ? junctionSignalFields(network) : ''}
     </section>
     <section class="settings-section"><div class="section-title"><h3>Traffic demand</h3><span class="section-number">04</span></div><div class="input-grid">${DIRECTIONS.filter(d => !(d === 'north' && active().template === 'tJunction')).map(d => numberField(`${d[0].toUpperCase() + d.slice(1)} (veh/h)`, `demand.${d}`, 0, 3600)).join('')}</div>
-      ${corridor ? '<p class="field-hint">North and south values apply to each junction’s side road.</p>' : ''}${grid ? '<p class="field-hint">Each value applies in full to every boundary approach facing that way: for example, every north boundary road receives the north veh/h.</p>' : ''}
+      ${corridor ? '<p class="field-hint">North and south values apply to each junction’s side road.</p>' : ''}${grid ? '<p class="field-hint">Each value applies in full to every boundary approach facing that way (for example, every north boundary road receives the north veh/h), unless the approach has its own demand under Approach settings.</p>' : ''}
       <div class="input-grid">${numberField('Left turn (%)', 'turning.left', 0, 100)}${numberField('Right turn (%)', 'turning.right', 0, 100)}</div>
       <p class="field-hint">Shared turning shares apply wherever an approach has none of its own; the remainder goes straight. At the roundabout, left, straight and right mean the first, second and third exit. Unavailable movements are dropped and the remaining shares rescaled.</p>
       <label class="field" style="margin-top:12px">Demand assumption<select data-path="demand.multiplier"><option value="0.75" ${active().demand.multiplier === .75 ? 'selected' : ''}>Low · 0.75×</option><option value="1" ${active().demand.multiplier === 1 ? 'selected' : ''}>Central · 1.00×</option><option value="1.25" ${active().demand.multiplier === 1.25 ? 'selected' : ''}>High · 1.25×</option>${![.75, 1, 1.25].includes(active().demand.multiplier) ? `<option selected value="${active().demand.multiplier}">Custom · ${active().demand.multiplier}×</option>` : ''}</select></label>

@@ -53,6 +53,10 @@ export function approachSettings(scenario, linkId, kind = 'entry') {
   };
 }
 
+// Base demand (veh/h, before the multiplier and profile) on a boundary approach:
+// its own value if set, else the directional value for the way it faces.
+export const entryDemand = (scenario, link) => scenario.approaches?.[link.id]?.demand ?? scenario.demand[link.demandKey];
+
 function makeLink(id, label, from, to, x0, y0, x1, y1, lanes, speedKmh, extra = {}) {
   const length = Math.hypot(x1 - x0, y1 - y0);
   return { id, label, from, to, x0, y0, x1, y1, dx: (x1 - x0) / length, dy: (y1 - y0) / length, length,

@@ -131,3 +131,35 @@ test('changes, checks, migration and drawing understand grid layouts', () => {
   assert.deepEqual(Object.keys(placed.centres).sort(), ['A', 'B', 'C', 'D', 'E', 'F']);
   assert.ok(Math.abs(placed.centres.A.x - placed.centres.C.x) < 1e-6 && placed.centres.E.x > placed.centres.B.x);
 });
+
+test('a boundary approach can have its own demand without disturbing the others', () => {
+  const departures = scenario => {
+    const simulation = new Simulation(scenario);
+    const seen = [];
+    const make = simulation.makeVehicle.bind(simulation);
+    simulation.makeVehicle = (id, at) => { const v = make(id, at); seen.push(`${id}@${at.toFixed(3)}`); return v; };
+    const result = simulation.runToEnd();
+    return { seen, result, from: id => seen.filter(x => x.startsWith(`${id}@`)) };
+  };
+  const base = grid(); base.run.duration = 300;
+  const quiet = structuredClone(base); quiet.approaches['A-north'] = { demand: 0 };
+  const busy = structuredClone(base); busy.approaches['A-north'] = { demand: 900 };
+  const same = structuredClone(base); same.approaches['A-north'] = { demand: base.demand.north };
+  const b = departures(base), q = departures(quiet), h = departures(busy);
+  assert.equal(q.from('A-north').length, 0, 'zero demand generates no traffic');
+  assert.ok(h.from('A-north').length > 1.6 * b.from('A-north').length, 'doubling demand roughly doubles arrivals');
+  for (const id of ['A-west', 'B-north', 'D-east']) assert.deepEqual(q.from(id), b.from(id), `${id} arrivals stay paired`);
+  const strip = r => ({ ...r, inputs: null, fingerprint: null });
+  assert.deepEqual(strip(departures(same).result), strip(b.result), 'an override equal to the shared value changes nothing');
+
+  assert.match(validateScenario(Object.assign(structuredClone(base), { approaches: { 'A-north': { demand: 4000 } } })).join(' '), /demand/i);
+  const text = scenarioChanges(base, quiet);
+  assert.deepEqual(text.map(c => [c.kind, changeText(c)]), [['assumption', 'A north approach: demand: shared value → 0 veh/h']]);
+
+  const allNorth = structuredClone(base);
+  allNorth.approaches = { 'A-north': { demand: 300 }, 'B-north': { demand: 200 }, 'C-A': { demand: 100 } };
+  const findings = modelChecks(allNorth);
+  assert.ok(findings.some(f => f.title === 'North demand is not used' && f.level === 'info'));
+  assert.ok(findings.some(f => /Demand on C → A is ignored/.test(f.title)));
+  assert.ok(!/2 north approaches/.test(findings.find(f => f.title === 'Demand applies to each boundary approach').detail));
+});

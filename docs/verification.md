@@ -3,18 +3,20 @@
 ## Grid network editor — 12 November 2026
 
 - Existing templates are unchanged: full results for the four-arm, T-junction, corridor and roundabout templates (plain, with turning, and with a protected-right-turn custom plan; 11 cases) hash identically before and after the change.
-- `npm test`: 53 passed (7 new in `test/grid-network.test.js`):
+- `npm test`: 54 passed (8 new in `test/grid-network.test.js`):
   - the default 2 × 2 grid compiles to 4 junctions with 8 internal, 8 boundary and 8 exit links, and every road can reach an exit;
   - a grid run conserves demand at every step and is deterministic;
   - the layout checks catch arms facing nothing, crossing boundary roads (cleared by shorter approaches), disconnected junctions, shared cells, two-arm junctions, cells off the grid, too many junctions, and layouts on other templates;
   - 200 sampled routes from every entry of a 2 × 3 grid all end at an exit without revisiting a junction;
   - a shared custom plan fits a mix of T and four-arm junctions, and every entry happens on that movement's green at that junction's offset;
   - offsets shift one junction's plan, while paired seeds keep arrivals identical;
-  - change summaries name grid edits ("Junction E grid position: no junction → column 3, row 1"), model checks describe directional demand and loops, old projects migrate, and the map places every junction.
+  - change summaries name grid edits ("Junction E grid position: no junction → column 3, row 1"), model checks describe directional demand and loops, old projects migrate, and the map places every junction;
+  - per-approach demand: zero demand on one approach generates no traffic there, doubling it roughly doubles arrivals, other approaches' arrival times are unchanged, an override equal to the shared value gives identical results, it is classed as an assumption change, and model checks flag unused directional values and demand set on internal links.
 - `npm run test:browser`: 15 passed in Chrome 157. The new check:
   - switches to the grid (4 junctions, 16 inspectable approaches);
   - adds a junction that makes roads cross (rejected, focus moved to the new junction), then completes the block (valid, 6 junctions);
   - removes and restores an arm (rejected, then valid, with focus kept on the toggle);
+  - gives one boundary approach its own demand (shown as the effective value; no demand field on links between junctions);
   - confirms the settings column does not scroll sideways;
   - runs until trips complete across the grid;
   - leaves the grid and confirms that the layout was removed.

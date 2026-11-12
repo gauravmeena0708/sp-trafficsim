@@ -359,6 +359,15 @@ await check('grid network editor: add junctions, connectivity checks, run and le
   assert(await evaluate(`document.activeElement?.dataset?.gridArm === 'west'`), 'focus should stay on the arm toggle');
   await setInput('[data-grid-arm="west"]', 'el.checked = true');
   assert(!(await validation()), 'restoring the arm should be valid');
+  // One boundary approach with its own demand.
+  await evaluate(`(() => { const el = document.getElementById('approach-edit'); el.value = 'E-north'; el.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  assert(await evaluate(`document.querySelector('[data-override="demand"]')?.placeholder === '450 (shared)'`), 'boundary approaches offer a demand field showing the directional value');
+  await setInput('[data-override="demand"]', `el.value = '120'`);
+  await evaluate(`(() => { const el = document.getElementById('approach-edit'); el.value = 'E-north'; el.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  assert(await evaluate(`document.querySelector('[data-override="demand"]').value === '120' && document.getElementById('settings-form').textContent.includes('Effective here: 120 veh/h')`), 'the override is kept and shown as the effective demand');
+  assert(!(await validation()), 'a per-approach demand should be valid');
+  await evaluate(`(() => { const el = document.getElementById('approach-edit'); el.value = 'A-B'; el.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  assert(await evaluate(`!document.querySelector('[data-override="demand"]')`), 'links between junctions have no demand field');
   const overflow = await evaluate(`(() => { const p = document.querySelector('.settings-panel'); return p.scrollWidth - p.clientWidth; })()`);
   assert(overflow <= 1, `settings panel scrolls sideways by ${overflow}px with the grid editor open`);
   await evaluate(`document.getElementById('speed-select').value = '32'; document.getElementById('play-button').click()`);

@@ -1,5 +1,5 @@
 import { DIRECTIONS, validateScenario } from './project.js';
-import { analysePlanPhase, approachSettings, compileNetwork, configurableApproaches, movementLabel, movementsFrom } from './network.js';
+import { analysePlanPhase, approachSettings, compileNetwork, configurableApproaches, entryDemand, movementLabel, movementsFrom } from './network.js';
 import { cycleLength, movementGreenTime } from '../simulation/signals.js';
 
 // Indicative discharge used only for a pre-run warning. It is a common planning
@@ -17,20 +17,28 @@ export function modelChecks(s) {
   const network = compileNetwork(s);
   const roundabout = network.template === 'roundabout';
   const linkIds = new Set(configurableApproaches(network).map(l => l.id));
-  const entryArms = new Set(network.links.filter(l => l.kind === 'entry').map(l => l.demandKey));
+  const entries = network.links.filter(l => l.kind === 'entry');
+  // Approaches with their own demand do not use the directional value.
+  const inherits = entries.filter(l => s.approaches[l.id]?.demand === undefined);
+  const entryArms = new Set(entries.map(l => l.demandKey));
+  const usedArms = new Set(inherits.map(l => l.demandKey));
 
   for (const d of DIRECTIONS) {
     if (!entryArms.has(d) && s.demand[d] > 0) findings.push({ level: 'warning', title: `${name(d)} demand is not used`, detail: `This layout has no ${d} approach, so its ${s.demand[d]} veh/h are ignored. Set it to 0 or choose another template.` });
+    else if (entryArms.has(d) && !usedArms.has(d) && s.demand[d] > 0) findings.push({ level: 'info', title: `${name(d)} demand is not used`, detail: `Every ${d} approach has its own demand, so the shared ${d} value (${s.demand[d]} veh/h) has no effect.` });
+  }
+  for (const [id, overrides] of Object.entries(s.approaches)) {
+    if (overrides.demand !== undefined && network.byId[id] && network.byId[id].kind !== 'entry') findings.push({ level: 'warning', title: `Demand on ${network.byId[id].label} is ignored`, detail: 'Only boundary approaches generate traffic. Links between junctions carry traffic from upstream.', target: id });
   }
   if (network.template === 'grid') {
     // Directional demand applies in full to every boundary approach facing that way.
-    const counts = DIRECTIONS.map(d => [d, network.links.filter(l => l.kind === 'entry' && l.demandKey === d).length]).filter(([, n]) => n > 1);
-    if (counts.length) findings.push({ level: 'info', title: 'Demand applies to each boundary approach', detail: `Every boundary approach receives the full veh/h for the direction it faces: ${counts.map(([d, n]) => `${n} ${d} approaches × ${s.demand[d]}`).join(', ')} veh/h. Lower the directional values if they describe the whole network edge.` });
+    const counts = DIRECTIONS.map(d => [d, inherits.filter(l => l.demandKey === d).length]).filter(([, n]) => n > 1);
+    if (counts.length) findings.push({ level: 'info', title: 'Demand applies to each boundary approach', detail: `Every boundary approach without its own demand receives the full veh/h for the direction it faces: ${counts.map(([d, n]) => `${n} ${d} approaches × ${s.demand[d]}`).join(', ')} veh/h. Lower the directional values, or give approaches their own demand under Approach settings.` });
     const ring = network.links.some(l => l.kind === 'internal') && network.links.filter(l => l.kind === 'internal').length / 2 >= network.nodes.length;
     if (ring) findings.push({ level: 'info', title: 'The network has loops', detail: 'Routes are chosen junction by junction from turning shares and never revisit a junction; if every movement would, the vehicle takes the one closest to an exit. There is no route choice by travel time.' });
   }
   for (const link of network.links.filter(l => l.kind === 'entry')) {
-    if (!s.demand[link.demandKey]) findings.push({ level: 'info', title: `No demand on ${link.label}`, detail: 'No vehicles enter here. Check that this is intended.', target: link.id });
+    if (!entryDemand(s, link)) findings.push({ level: 'info', title: `No demand on ${link.label}`, detail: 'No vehicles enter here. Check that this is intended.', target: link.id });
   }
   for (const id of Object.keys(s.approaches)) {
     if (!linkIds.has(id)) findings.push({ level: 'warning', title: `Unused approach settings: ${id}`, detail: 'This layout has no such approach, so these settings have no effect. Remove them or switch template.', target: id });
@@ -58,13 +66,13 @@ export function modelChecks(s) {
     if (shares.right > 0 && available.has('right') && !link.pocket && link.throughLanes === 1) {
       findings.push({ level: 'warning', title: `${link.label}: right-turners share the only lane`, detail: 'Each right-turner waits for a gap in opposing traffic and holds everything behind it. A right-turn pocket or an extra lane would separate them.', target: link.id });
     }
-    if (link.kind === 'entry' && s.demand[link.demandKey] > 0) {
+    if (link.kind === 'entry' && entryDemand(s, link) > 0) {
       const plan = node.plan;
       // Green for the approach's straight-ahead movement (or its main movement if it has none).
       const main = available.has('straight') ? 'straight' : [...available][0];
       const green = movementGreenTime(plan, link.toArm, main);
       const indicative = INDICATIVE_LANE_FLOW * link.lanes * green / cycleLength(plan);
-      const demand = s.demand[link.demandKey] * s.demand.multiplier;
+      const demand = entryDemand(s, link) * s.demand.multiplier;
       if (demand > indicative) findings.push({ level: 'warning', title: `${link.label}: demand may exceed discharge`, detail: `${Math.round(demand)} veh/h arrive, against an indicative ${Math.round(indicative)} veh/h (${INDICATIVE_LANE_FLOW} veh/h per lane × ${green} s green ÷ ${cycleLength(plan)} s cycle). This rule of thumb is not a model result; expect queues to grow through the run.`, target: link.id });
     }
   }
