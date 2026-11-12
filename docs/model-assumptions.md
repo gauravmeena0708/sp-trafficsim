@@ -1,12 +1,13 @@
-# Model v0.4: assumptions and interpretation
+# Model v0.5: assumptions and interpretation
 
 **Status: illustrative. No field calibration or independent validation has been performed.**
 
-Engine identifier: `illustrative-network/0.4.0`. Project schema version 4. Older projects are migrated on import:
+Engine identifier: `illustrative-network/0.5.0`. Project schema version 5. Older projects are migrated on import:
 
 - schema 1 becomes a straight-through four-arm junction;
 - schema 2 gains empty per-approach and per-junction settings;
-- schema 3 gains a constant demand profile.
+- schema 3 gains a constant demand profile;
+- schema 4 gains the two-phase signal plan type.
 
 ## Network
 
@@ -60,7 +61,28 @@ Vehicles cross at a constant speed capped by movement (8 m/s straight, 6 m/s rig
 
 ## Signals
 
-Two fixed-time groups alternate: east–west, then north–south. On the T-junction the north–south group serves the south arm only. Greens accept 5–300 seconds; each group has separate yellow and all-red intervals. On the corridor, each junction uses the shared greens unless it has its own east–west and/or north–south greens; yellow and all-red stay shared. Junction B's plan starts `offset` seconds later. Timing sweeps change the shared green, so they do not move a junction that has its own value for that group. Pedestrian clearance is not calculated because pedestrians are not modelled. Adaptive control is not implemented.
+Signals control **movements**: each approach's left turn, straight ahead and right turn. A vehicle may enter the junction only while its own movement is green. A plan is one of two types.
+
+**Two phases (default).** Two fixed-time groups alternate: east–west, then north–south. On the T-junction the north–south group serves the south arm only. Greens accept 5–300 seconds; each group has separate yellow and all-red intervals. On the corridor, each junction uses the shared greens unless it has its own east–west and/or north–south greens; yellow and all-red stay shared. Junction B's plan starts `offset` seconds later. Timing sweeps change the shared green, so they do not move a junction that has its own value for that group. In this plan, right turns are permitted in their arm's phase and give way.
+
+**Custom phases.** 2–8 phases, each with a name, a green time (5–300 s) and the movements it serves. The plan is shared by every signalised junction; per-junction greens apply only to the two-phase plan, and the model checks warn if they are left set.
+
+- **Clearance.** Every phase is followed by the shared yellow and all-red intervals, even for movements that continue into the next phase. This is a conservative simplification: no overlaps.
+- **Validation.**
+  - A phase may only list movements the layout offers.
+  - Every offered movement must be green in at least one phase.
+  - Two movements whose paths conflict may not share a phase if both are straight or left movements.
+- **Permitted and protected right turns.** A right turn that conflicts with a straight or left movement in the same phase is *permitted*: it gives way using the 4-second gap rule. A right turn with no conflicting movement green is *protected*. The editor and the model checks label permitted turns.
+- **Lane use.** Without a pocket, a right-turner waiting for a later right-turn phase at the head of a shared lane holds the through traffic behind it. The inspector reports this, and it can produce persistent-queue events.
+- **Presets:**
+  - protected right turns (four phases);
+  - one arm at a time;
+  - two phases with permitted right turns, which reproduces the built-in two-phase plan exactly.
+- **Sweeps** can target one phase's green.
+
+Persistent-queue cycles are tracked per approach while any of its movements is green. Only vehicles whose own movement is green are tagged, so right-turners waiting for their phase are not counted against the through phase.
+
+Pedestrian clearance is not calculated because pedestrians are not modelled. Adaptive control is not implemented.
 
 ## Arrivals and comparison
 

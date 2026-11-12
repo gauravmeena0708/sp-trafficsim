@@ -1,5 +1,24 @@
 # Verification record
 
+## Signal phase editor — 11 November 2026
+
+- `npm test`: 46 passed (8 new in `test/signal-phases.test.js`):
+  - custom cycle arithmetic, phase names, movement-level greens and a "partial" signal head;
+  - validation of crossing straights, unserved and non-existent movements, and phase count;
+  - every preset valid on every signalised template;
+  - a custom plan equal to the two-phase plan reproduces it exactly;
+  - with protected right-turn phases, every junction entry happened on that movement's green, and no right turn ever had to give way;
+  - with pockets, right-turners waiting for their phase raise no persistent-queue events, while in a single shared lane they do;
+  - sweeps target one phase without modifying the source;
+  - model checks name permitted right turns and ignored per-junction greens.
+- `npm run test:browser`: 14 passed in Chrome 157 and Edge 157. The new check covers:
+  - switching to custom phases starts from the equivalent two phases with yielding rights marked;
+  - the protected preset gives four phases with none yielding;
+  - adding a crossing movement is rejected and blocks the run, with focus kept on the toggle;
+  - running shows the right-turn phase by name;
+  - phase sweep targets appear;
+  - the settings column does not scroll sideways. This caught and fixed an over-wide select.
+
 ## Change summaries and precision-based replications — 11 November 2026
 
 - `npm test`: 38 passed (5 new in `test/comparisons.test.js`):

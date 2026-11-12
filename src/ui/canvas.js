@@ -1,8 +1,8 @@
 import { FLEET } from '../model/project.js';
-import { ARM_VECTORS, armGroup, laneOffset, pointOnPath } from '../model/network.js';
-import { groupColour } from '../simulation/signals.js';
+import { ARM_VECTORS, laneOffset, pointOnPath } from '../model/network.js';
+import { armSignal } from '../simulation/signals.js';
 
-const SIGNAL_COLOURS = { green: '#7fbf5a', yellow: '#e2b33c', red: '#d8735a' };
+const SIGNAL_COLOURS = { green: '#7fbf5a', yellow: '#e2b33c', red: '#d8735a', partial: '#7fbf5a' };
 const MIN_LANE_PX = 5;
 
 // Schematic renderer for any compiled network. Lateral dimensions (lane widths,
@@ -188,10 +188,12 @@ export class NetworkCanvas {
       } else {
         c.strokeStyle = '#eef0df'; c.lineWidth = 2;
         c.beginPath(); c.moveTo(stopA.x, stopA.y); c.lineTo(stopB.x, stopB.y); c.stroke();
-        const colour = groupColour(node.plan, simulation.time, armGroup(link.toArm), node.offset);
+        const colour = armSignal(node.plan, simulation.time, node.offset, link.toArm, simulation.links[link.id].movementTypes);
         const lamp = this.offsetPoint(link, width + 1.6, link.length - 2);
         c.fillStyle = SIGNAL_COLOURS[colour];
         c.beginPath(); c.arc(lamp.x, lamp.y, 3.2, 0, Math.PI * 2); c.fill();
+        // Some movements green, others red (e.g. a right-turn-only phase): red ring.
+        if (colour === 'partial') { c.strokeStyle = SIGNAL_COLOURS.red; c.lineWidth = 1.6; c.beginPath(); c.arc(lamp.x, lamp.y, 4.4, 0, Math.PI * 2); c.stroke(); }
       }
       const state = simulation.links[link.id];
       if (state.queue > 5) this.line(link, width + 0.9, link.length, link.length - state.queue, '#d2a052', 2);

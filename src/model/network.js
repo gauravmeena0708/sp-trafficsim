@@ -283,3 +283,52 @@ export const inboundLinks = network => network.links.filter(l => l.to);
 
 // Links a planner may configure individually (boundary and internal approaches).
 export const configurableApproaches = network => network.links.filter(l => l.kind === 'entry' || l.kind === 'internal');
+
+// ---------------------------------------------------------------- signal movements
+
+// Movements offered at a junction: one per (arrival arm, movement type).
+export function nodeMovements(network, node) {
+  const list = [];
+  for (const arm of node.arms) {
+    const inbound = node.inbound[arm];
+    if (!inbound) continue;
+    for (const m of movementsFrom(network, inbound)) list.push({ id: `${arm}:${m.movement}`, arm, movement: m.movement, link: inbound, out: m.link });
+  }
+  return list;
+}
+
+// Every lane-level path a movement can use: the lanes it may arrive in, to any
+// lane of the receiving road (vehicles pick their exit lane by next movement).
+function movementPaths(network, m) {
+  const from = network.byId[m.link], to = network.byId[m.out];
+  const inLanes = m.movement === 'straight' ? Array.from({ length: from.throughLanes }, (_, i) => i) : [laneForMovement(from, m.movement)];
+  const outLanes = Array.from({ length: to.throughLanes }, (_, i) => i);
+  return inLanes.flatMap(i => outLanes.map(o => junctionPath(network, from.id, i, to.id, o)));
+}
+
+export function movementsConflict(network, a, b) {
+  if (a.arm === b.arm) return false;
+  const pa = movementPaths(network, a), pb = movementPaths(network, b);
+  return pa.some(p => pb.some(q => pathsConflict(network, p, q)));
+}
+
+// Movements green together in one phase. A right turn that conflicts with a
+// straight or left movement is *permitted*: it yields (gap acceptance). Two
+// conflicting straight/left movements cannot share a phase.
+export function analysePhase(network, node, ids) {
+  const movements = nodeMovements(network, node).filter(m => ids.includes(m.id));
+  const errors = [], permitted = new Set();
+  for (let i = 0; i < movements.length; i++) for (let j = i + 1; j < movements.length; j++) {
+    const a = movements[i], b = movements[j];
+    if (!movementsConflict(network, a, b)) continue;
+    if (a.movement === 'right' && b.movement !== 'right') permitted.add(a.id);
+    else if (b.movement === 'right' && a.movement !== 'right') permitted.add(b.id);
+    else if (a.movement !== 'right' || b.movement !== 'right') errors.push([a.id, b.id]);
+  }
+  return { errors, permitted: [...permitted] };
+}
+
+export const movementLabel = id => {
+  const [arm, movement] = id.split(':');
+  return `${arm[0].toUpperCase() + arm.slice(1)} ${movement === 'straight' ? 'straight ahead' : `${movement} turn`}`;
+};

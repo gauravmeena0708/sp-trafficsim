@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createScenario, parseProject, createProject, validateScenario } from '../src/model/project.js';
+import { createScenario, parseProject, createProject, validateScenario, SCHEMA_VERSION } from '../src/model/project.js';
 import { modelChecks } from '../src/model/checks.js';
 import { Simulation, GAP } from '../src/simulation/engine.js';
 import { compileNetwork, pathsConflict, chooseRoute } from '../src/model/network.js';
@@ -161,6 +161,7 @@ test('schema 2 projects migrate to the current schema with empty overrides and a
   const loaded = parseProject(JSON.stringify({ schemaVersion: 2, scenarios: [v2] }));
   assert.deepEqual(loaded.scenarios[0].approaches, {});
   assert.deepEqual(loaded.scenarios[0].signals.junctions, {});
-  assert.equal(loaded.schemaVersion, 4);
+  assert.equal(loaded.schemaVersion, SCHEMA_VERSION);
+  assert.equal(loaded.scenarios[0].signals.mode, 'twoPhase');
   assert.deepEqual(loaded.scenarios[0].demand.profile.factors, [1]);
 });

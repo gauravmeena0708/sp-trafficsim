@@ -1,6 +1,6 @@
 import { DIRECTIONS, validateScenario } from './project.js';
-import { approachSettings, compileNetwork, configurableApproaches, movementsFrom } from './network.js';
-import { cycleLength } from '../simulation/signals.js';
+import { analysePhase, approachSettings, compileNetwork, configurableApproaches, movementLabel, movementsFrom } from './network.js';
+import { cycleLength, movementGreenTime } from '../simulation/signals.js';
 
 // Indicative discharge used only for a pre-run warning. It is a common planning
 // rule of thumb, not a calibrated saturation flow and not a model output.
@@ -53,11 +53,21 @@ export function modelChecks(s) {
     }
     if (link.kind === 'entry' && s.demand[link.demandKey] > 0) {
       const plan = node.plan;
-      const group = link.toArm === 'east' || link.toArm === 'west' ? 'eastWest' : 'northSouth';
-      const indicative = INDICATIVE_LANE_FLOW * link.lanes * plan[group] / cycleLength(plan);
+      // Green for the approach's straight-ahead movement (or its main movement if it has none).
+      const main = available.has('straight') ? 'straight' : [...available][0];
+      const green = movementGreenTime(plan, link.toArm, main);
+      const indicative = INDICATIVE_LANE_FLOW * link.lanes * green / cycleLength(plan);
       const demand = s.demand[link.demandKey] * s.demand.multiplier;
-      if (demand > indicative) findings.push({ level: 'warning', title: `${link.label}: demand may exceed discharge`, detail: `${Math.round(demand)} veh/h arrive, against an indicative ${Math.round(indicative)} veh/h (${INDICATIVE_LANE_FLOW} veh/h per lane × ${plan[group]} s green ÷ ${cycleLength(plan)} s cycle). This rule of thumb is not a model result; expect queues to grow through the run.`, target: link.id });
+      if (demand > indicative) findings.push({ level: 'warning', title: `${link.label}: demand may exceed discharge`, detail: `${Math.round(demand)} veh/h arrive, against an indicative ${Math.round(indicative)} veh/h (${INDICATIVE_LANE_FLOW} veh/h per lane × ${green} s green ÷ ${cycleLength(plan)} s cycle). This rule of thumb is not a model result; expect queues to grow through the run.`, target: link.id });
     }
+  }
+  if (s.signals.mode === 'custom' && !roundabout) {
+    if (Object.keys(s.signals.junctions).length) findings.push({ level: 'warning', title: 'Per-junction green times are ignored', detail: 'With custom phases, every signalised junction runs the same phase plan. Remove the per-junction greens or return to the two-phase plan.' });
+    const node = network.nodes.find(n => n.control === 'signal');
+    s.signals.phases.forEach((p, i) => {
+      const { permitted } = analysePhase(network, node, p.movements);
+      if (permitted.length) findings.push({ level: 'info', title: `Phase ${i + 1}: permitted right turns`, detail: `${permitted.map(movementLabel).join(', ')} cross${permitted.length === 1 ? 'es' : ''} opposing traffic that is also green, so ${permitted.length === 1 ? 'it gives' : 'they give'} way (4 s critical gap). Give right turns their own phase to protect them.` });
+    });
   }
   const { period, factors } = s.demand.profile;
   if (factors.length > 1 || factors[0] !== 1) {

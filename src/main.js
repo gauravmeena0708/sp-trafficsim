@@ -3,9 +3,9 @@ import { lineChart } from './ui/charts.js';
 import { modelChecks } from './model/checks.js';
 import { changeSummary, changeText, scenarioChanges } from './model/changes.js';
 import { Simulation, STEP } from './simulation/engine.js';
-import { cycleLength } from './simulation/signals.js';
-import { TEMPLATES, approachSettings, compileNetwork, configurableApproaches, inboundLinks } from './model/network.js';
-import { DEMAND_LEVELS, PRECISION, SWEEP_GROUPS, sweepConfigurations } from './simulation/experiments.js';
+import { PHASE_PRESETS, cycleLength, phasePreset } from './simulation/signals.js';
+import { TEMPLATES, analysePhase, approachSettings, compileNetwork, configurableApproaches, inboundLinks, movementLabel, nodeMovements } from './model/network.js';
+import { DEMAND_LEVELS, PRECISION, sweepConfigurations, sweepGroupLabel, sweepTargets } from './simulation/experiments.js';
 import { explainApproach } from './diagnostics/explain.js';
 import { NetworkCanvas } from './ui/canvas.js';
 import { escapeHTML as esc, format, download, renderResults, renderTimeCharts, comparisonWarnings, resultsAreStale, csvReport, printMetadata } from './ui/reports.js';
@@ -74,6 +74,28 @@ function approachSection(network) {
     </section>`;
 }
 
+// Custom phase plan: each phase lists the movements that get green together.
+// Arrays are replaced on every edit (the signal cache compares by reference).
+const GLYPHS = { left: '↰', straight: '↑', right: '↱' };
+function phaseEditor(network) {
+  const s = active();
+  const node = network.nodes.find(n => n.control === 'signal');
+  const offered = nodeMovements(network, node);
+  const arms = [...new Set(offered.map(m => m.arm))];
+  const cards = s.signals.phases.map((p, i) => {
+    const { permitted } = analysePhase(network, node, p.movements);
+    const rows = arms.map(arm => `<div class="movement-row"><span>${arm[0].toUpperCase() + arm.slice(1)}</span>${['left', 'straight', 'right'].map(movement => {
+      const id = `${arm}:${movement}`;
+      if (!offered.some(o => o.id === id)) return '<span class="movement none" aria-hidden="true">·</span>';
+      return `<label class="movement${permitted.includes(id) ? ' permitted' : ''}"><input type="checkbox" data-phase="${i}" data-movement="${id}" ${p.movements.includes(id) ? 'checked' : ''}><span aria-hidden="true">${GLYPHS[movement]}</span><span class="sr-only">${esc(movementLabel(id))}</span>${permitted.includes(id) ? '<em>yields</em>' : ''}</label>`;
+    }).join('')}</div>`).join('');
+    return `<div class="phase-card"><div class="phase-head"><span class="phase-number">${i + 1}</span><input type="text" data-phase="${i}" data-phase-field="name" value="${esc(p.name)}" maxlength="40" aria-label="Phase ${i + 1} name"><label class="phase-green"><span>Green (s)</span><input type="number" data-phase="${i}" data-phase-field="green" value="${p.green}" min="5" max="300" aria-label="Phase ${i + 1} green, seconds"></label><button type="button" class="text-button" data-phase-action="remove" data-phase="${i}" ${s.signals.phases.length <= 2 ? 'disabled' : ''} aria-label="Remove phase ${i + 1}">Remove</button></div>
+      <div class="movement-grid" role="group" aria-label="Movements green in phase ${i + 1}"><div class="movement-row movement-header" aria-hidden="true"><span></span><span>Left</span><span>Straight</span><span>Right</span></div>${rows}</div></div>`;
+  }).join('');
+  return `${cards}<div class="phase-actions"><button type="button" class="button secondary" data-phase-action="add" ${s.signals.phases.length >= 8 ? 'disabled' : ''}>Add phase</button><label class="field"><span>Start from a preset</span><select data-phase-action="preset"><option value="">Choose…</option>${Object.entries(PHASE_PRESETS).map(([key, label]) => `<option value="${key}">${esc(label)}</option>`).join('')}</select></label></div>
+    <p class="field-hint">Tick the movements that get green together. A right turn crossing opposing traffic that is also green is <em>permitted</em> and gives way; give it its own phase to protect it. Crossing straight or left movements cannot share a phase.</p>`;
+}
+
 function junctionSignalFields(network) {
   const s = active();
   const nodes = network.nodes.filter(n => n.control === 'signal');
@@ -101,11 +123,11 @@ function renderSettings() {
     ${approachSection(network)}
     <section class="settings-section"><div class="section-title"><h3>Signal timings</h3><span class="section-number">03</span></div>
       ${roundabout ? '<p class="field-hint">The roundabout uses priority control: entering traffic gives way to circulating traffic. Signal timings are kept for other layouts but have no effect here.</p></section><section hidden>' : ''}
-      ${rangeField('East–west green (s)', 'signals.eastWest', 5, 300, 'seconds')}
-      ${rangeField('North–south green (s)', 'signals.northSouth', 5, 300, 'seconds')}
+      <label class="field">Signal plan<select data-plan-mode><option value="twoPhase" ${active().signals.mode === 'twoPhase' ? 'selected' : ''}>Two phases: east–west, then north–south</option><option value="custom" ${active().signals.mode === 'custom' ? 'selected' : ''}>Custom phases</option></select></label>
+      ${active().signals.mode === 'custom' ? phaseEditor(network) : `${rangeField('East–west green (s)', 'signals.eastWest', 5, 300, 'seconds')}${rangeField('North–south green (s)', 'signals.northSouth', 5, 300, 'seconds')}`}
       <div class="input-grid">${numberField('Yellow / phase (s)', 'signals.yellow', 3, 10)}${numberField('All-red / phase (s)', 'signals.allRed', 2, 10)}${corridor ? numberField('Junction B offset (s)', 'signals.offset', 0, 600) : ''}</div>
-      <p class="field-hint">Fixed-time, two-phase signals${corridor ? ' shared by both junctions; the offset delays the start of junction B’s plan for coordination' : ''}. Transition intervals remain separate from green time. Right turns are permissive and yield to opposing traffic arriving within 4 seconds.</p><div class="timing-summary"><span>Total cycle</span><strong id="settings-cycle">${cycleLength(active().signals)} seconds</strong></div>
-      ${junctionSignalFields(network)}
+      <p class="field-hint">Fixed-time signals${corridor ? ' shared by both junctions; the offset delays the start of junction B’s plan for coordination' : ''}. Every phase is followed by the yellow and all-red intervals.${active().signals.mode === 'twoPhase' ? ' Right turns are permitted in their arm’s phase and give way to opposing traffic arriving within 4 seconds.' : ''}</p><div class="timing-summary"><span>Total cycle</span><strong id="settings-cycle">${cycleLength(active().signals)} seconds</strong></div>
+      ${active().signals.mode === 'twoPhase' ? junctionSignalFields(network) : ''}
     </section>
     <section class="settings-section"><div class="section-title"><h3>Traffic demand</h3><span class="section-number">04</span></div><div class="input-grid">${DIRECTIONS.filter(d => !(d === 'north' && active().template === 'tJunction')).map(d => numberField(`${d[0].toUpperCase() + d.slice(1)} (veh/h)`, `demand.${d}`, 0, 3600)).join('')}</div>
       ${corridor ? '<p class="field-hint">North and south values apply to each junction’s side road.</p>' : ''}
@@ -214,7 +236,7 @@ function refreshMetrics() {
   if (!simulation) return;
   const r = simulation.result();
   const phases = simulation.phases();
-  const phaseText = phase => phase.group === 'all' ? 'all-red' : `${phase.group === 'eastWest' ? 'east–west' : 'north–south'} ${phase.colour}`;
+  const phaseText = phase => phase.group === 'all' ? 'all-red' : phase.group === 'eastWest' || phase.group === 'northSouth' ? `${phase.group === 'eastWest' ? 'east–west' : 'north–south'} ${phase.colour}` : `${phase.name} ${phase.colour}`;
   const nodes = simulation.network.nodes.filter(n => n.control === 'signal');
   $('metric-completed').textContent = r.completed;
   $('metric-queue').innerHTML = `${format(r.maxQueue, 0)} <small>m</small>`;
@@ -273,13 +295,42 @@ function pruneForTemplate() {
   const dropped = [...Object.keys(s.approaches).filter(id => !links.has(id)), ...Object.keys(s.signals.junctions).filter(id => !nodes.has(id))];
   for (const id of Object.keys(s.approaches)) if (!links.has(id)) delete s.approaches[id];
   for (const id of Object.keys(s.signals.junctions)) if (!nodes.has(id)) delete s.signals.junctions[id];
+  // Custom phases keep only movements the new layout offers; too few phases left reverts to two-phase.
+  const signalNode = network.nodes.find(n => n.control === 'signal');
+  if (s.signals.mode === 'custom' && signalNode) {
+    const offered = new Set(nodeMovements(network, signalNode).map(m => m.id));
+    const removed = s.signals.phases.flatMap(p => p.movements.filter(m => !offered.has(m)));
+    s.signals.phases = s.signals.phases.map(p => ({ ...p, movements: p.movements.filter(m => offered.has(m)) })).filter(p => p.movements.length);
+    if (removed.length) dropped.push(`phase movements (${removed.map(movementLabel).join(', ')})`);
+    if (s.signals.phases.length < 2) { s.signals.mode = 'twoPhase'; s.signals.phases = []; dropped.push('the custom phase plan'); }
+  }
   return dropped;
 }
 
 $('settings-form').addEventListener('change', event => {
   if (event.target.id === 'approach-edit') { editingApproach = event.target.value; renderSettings(); }
 });
+$('settings-form').addEventListener('change', event => {
+  if (event.target.dataset.phaseAction !== 'preset' || !event.target.value) return;
+  const network = compileNetwork(active());
+  const offered = nodeMovements(network, network.nodes.find(n => n.control === 'signal')).map(m => m.id);
+  active().signals.phases = phasePreset(event.target.value, offered);
+  renderSettings(); inputsChanged();
+});
 $('settings-form').addEventListener('click', event => {
+  const action = event.target.closest('button[data-phase-action]')?.dataset.phaseAction;
+  if (action === 'add') {
+    const phases = active().signals.phases;
+    active().signals.phases = [...phases, { name: `Phase ${phases.length + 1}`, green: 15, movements: [] }];
+    renderSettings(); inputsChanged();
+    return;
+  }
+  if (action === 'remove') {
+    const i = Number(event.target.closest('button').dataset.phase);
+    active().signals.phases = active().signals.phases.filter((_, k) => k !== i);
+    renderSettings(); inputsChanged();
+    return;
+  }
   if (event.target.id !== 'clear-approach') return;
   delete active().approaches[editingApproach];
   renderSettings(); inputsChanged();
@@ -314,6 +365,35 @@ $('settings-form').addEventListener('input', event => {
     if (event.target.value === '') delete own[override];
     else own[override] = Number(event.target.value);
     if (Object.keys(own).length) s.approaches[editingApproach] = own; else delete s.approaches[editingApproach];
+    inputsChanged();
+    return;
+  }
+  const { planMode, phase, phaseField, movement } = event.target.dataset;
+  if (planMode !== undefined) {
+    const signals = active().signals;
+    signals.mode = event.target.value;
+    if (signals.mode === 'custom' && !signals.phases.length) {
+      // Start from the equivalent of the two-phase plan so nothing changes until edited.
+      const network = compileNetwork(active());
+      const offered = nodeMovements(network, network.nodes.find(n => n.control === 'signal')).map(m => m.id);
+      signals.phases = phasePreset('twoPhase', offered).map((p, i) => ({ ...p, green: i === 0 ? signals.eastWest : signals.northSouth }));
+    }
+    renderSettings(); inputsChanged();
+    return;
+  }
+  if (movement !== undefined) {
+    const i = Number(phase);
+    active().signals.phases = active().signals.phases.map((p, k) => k !== i ? p : { ...p, movements: event.target.checked ? [...p.movements, movement] : p.movements.filter(m => m !== movement) });
+    renderSettings();
+    document.querySelector(`[data-phase="${i}"][data-movement="${movement}"]`)?.focus();
+    inputsChanged();
+    return;
+  }
+  if (phaseField !== undefined) {
+    const i = Number(phase);
+    const value = phaseField === 'green' ? (event.target.value === '' ? NaN : Number(event.target.value)) : event.target.value;
+    active().signals.phases = active().signals.phases.map((p, k) => k !== i ? p : { ...p, [phaseField]: value });
+    if ($('settings-cycle')) $('settings-cycle').textContent = `${format(cycleLength(active().signals), 0)} seconds`;
     inputsChanged();
     return;
   }
@@ -375,8 +455,16 @@ $('play-button').addEventListener('click', () => {
 $('reset-button').addEventListener('click', () => { resetSimulation(); notice('Run reset with the same seed and inputs.'); });
 $('approach-buttons').addEventListener('click', event => { const button = event.target.closest('[data-link]'); if (button) selectApproach(button.dataset.link); });
 
+function renderSweepTargets() {
+  const signals = active().signals;
+  const current = $('sweep-group').value;
+  const targets = sweepTargets(signals);
+  $('sweep-group').innerHTML = targets.map(t => { const label = sweepGroupLabel(t, signals); return `<option value="${esc(t)}">${esc(label[0].toUpperCase() + label.slice(1))} green</option>`; }).join('');
+  if (targets.includes(current)) $('sweep-group').value = current;
+}
+
 function changeView(view) {
-  if (view === 'compare') { playing = false; refreshMetrics(); }
+  if (view === 'compare') { playing = false; refreshMetrics(); renderSweepTargets(); }
   for (const name of ['design', 'compare']) {
     $(`${name}-panel`).hidden = name !== view;
     $(`tab-${name}`).setAttribute('aria-selected', String(name === view));
@@ -465,7 +553,8 @@ $('sweep-button').addEventListener('click', () => {
   const multipliers = $('sweep-demand-levels').checked ? DEMAND_LEVELS.map(l => l.multiplier) : [active().demand.multiplier];
   try { sweepConfigurations({ group, start, end, increment, multipliers }); }
   catch (error) { notice(error.message, 'error'); return; }
-  startExperiment({ type: 'sweep', scenario: structuredClone(active()), group, start, end, increment, multipliers, count: $('replications').value === 'adaptive' ? PRECISION.initial : Number($('replications').value) }, `${SWEEP_GROUPS[group][0].toUpperCase() + SWEEP_GROUPS[group].slice(1)} timing sweep`);
+  const groupLabel = sweepGroupLabel(group, active().signals);
+  startExperiment({ type: 'sweep', scenario: structuredClone(active()), group, start, end, increment, multipliers, count: $('replications').value === 'adaptive' ? PRECISION.initial : Number($('replications').value) }, `${groupLabel[0].toUpperCase() + groupLabel.slice(1)} timing sweep`);
 });
 $('cancel-button').addEventListener('click', () => { stopExperiment(); $('experiment-status').textContent = `${experimentLabel} cancelled. Any displayed results are from the previous completed experiment.`; notice('Experiment cancelled.'); });
 $('csv-button').addEventListener('click', () => download('junction-results.csv', csvReport(results), 'text/csv;charset=utf-8'));

@@ -1414,3 +1414,122 @@ li.change-assumption,li.change-run{
 .verdict-inconclusive strong{
   color:#8a5a22
 }
+.phase-card{
+  border:1px solid var(--border);
+  border-radius:6px;
+  padding:8px;
+  margin:10px 0;
+  background:#fbfcf9
+}
+.phase-head{
+  display:grid;
+  grid-template-columns:auto 1fr auto;
+  gap:6px;
+  align-items:center
+}
+.phase-head input[type="text"]{
+  min-width:0;
+  font-size:11px
+}
+.phase-number{
+  font-size:10px;
+  font-weight:600;
+  color:#fff;
+  background:var(--green);
+  border-radius:10px;
+  width:18px;
+  height:18px;
+  display:grid;
+  place-items:center
+}
+.phase-green{
+  grid-column:2 / 3;
+  display:flex;
+  align-items:center;
+  gap:6px;
+  font-size:10px;
+  color:var(--muted)
+}
+.phase-green input{
+  width:64px
+}
+.phase-head .text-button{
+  grid-column:3;
+  grid-row:1 / 3;
+  font-size:10px
+}
+.movement-grid{
+  margin-top:6px;
+  display:grid;
+  gap:2px
+}
+.movement-row{
+  display:grid;
+  grid-template-columns:42px repeat(3,1fr);
+  align-items:center;
+  font-size:10px;
+  color:#5f6d5c
+}
+.movement-header span{
+  font-size:9px;
+  color:var(--muted);
+  text-align:center
+}
+.movement{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:3px;
+  padding:2px 0;
+  border-radius:4px;
+  cursor:pointer
+}
+.movement em{
+  font-size:8.5px;
+  font-style:normal;
+  color:#8a5a22
+}
+.movement.permitted{
+  background:#fbf1e4
+}
+.movement.none{
+  color:#c5ccc0;
+  justify-content:center;
+  display:flex
+}
+.phase-actions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  align-items:flex-end
+}
+.phase-actions .button{
+  font-size:11px;
+  padding:7px 10px
+}
+.phase-card,.phase-card *{
+  min-width:0;
+  box-sizing:border-box
+}
+.phase-head input[type="text"],.phase-green input{
+  width:100%;
+  max-width:100%
+}
+.phase-green input{
+  max-width:72px
+}
+.settings-panel select{
+  max-width:100%
+}
+/* Selects never set the settings column's width (long option text, wider fonts). */
+.settings-panel .field{
+  min-width:0;
+  max-width:100%
+}
+.settings-panel select{
+  width:100%;
+  min-width:0
+}
+.phase-actions .field{
+  flex:1 1 100%
+}

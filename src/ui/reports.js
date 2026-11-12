@@ -1,5 +1,5 @@
 import { fingerprint, ENGINE_VERSION } from '../model/project.js';
-import { sweepFindings, VERDICTS } from '../simulation/experiments.js';
+import { applySweepGreen, sweepFindings, VERDICTS } from '../simulation/experiments.js';
 import { changeSummary, changeText, scenarioChanges } from '../model/changes.js';
 import { lineChart, MAX_SERIES } from './charts.js';
 
@@ -95,7 +95,7 @@ export function resultsAreStale(results, scenarios) {
     // Sweeps deliberately vary one green time, the demand multiplier and the display name.
     if (!current) return true;
     const expected = structuredClone(current);
-    if (r.sweep) { expected.signals[r.sweep.group] = r.sweep.green; expected.demand.multiplier = r.sweep.multiplier; }
+    if (r.sweep) { applySweepGreen(expected.signals, r.sweep.group, r.sweep.green); expected.demand.multiplier = r.sweep.multiplier; }
     return fingerprint(expected) !== fingerprint(r.inputs);
   });
 }
