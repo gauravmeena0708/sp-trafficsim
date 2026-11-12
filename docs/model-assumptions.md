@@ -1,13 +1,14 @@
-# Model v0.5: assumptions and interpretation
+# Model v0.6: assumptions and interpretation
 
 **Status: illustrative. No field calibration or independent validation has been performed.**
 
-Engine identifier: `illustrative-network/0.5.0`. Project schema version 5. Older projects are migrated on import:
+Engine identifier: `illustrative-network/0.6.0`. Project schema version 6. Older projects are migrated on import:
 
 - schema 1 becomes a straight-through four-arm junction;
 - schema 2 gains empty per-approach and per-junction settings;
 - schema 3 gains a constant demand profile;
-- schema 4 gains the two-phase signal plan type.
+- schema 4 gains the two-phase signal plan type;
+- schema 5 gains an empty grid layout (`layout: null`).
 
 ## Network
 
@@ -19,12 +20,27 @@ Scenarios choose a template that compiles to an explicit graph (`src/model/netwo
 | T-junction | 1 | east, south, west (no north arm) |
 | Two-junction corridor | 2 (A west of B) | each has north and south side roads; A–B and B–A links of configurable length |
 | Single-lane roundabout | 4 priority junctions on a clockwise ring (24 m radius) | north, east, south, west |
+| Custom grid network | 1–8 signalised junctions on a 4 × 4 grid | 3 or 4 per junction, chosen by the planner |
 
-Roads take shared length, lane count and speed limit unless an approach has its own settings (below). The corridor link length is set separately and has finite storage. Traffic keeps left. Lane 0 is the kerbside lane and the highest lane index is the median lane. The map is a schematic, not a surveyed layout. Lane widths and junction boxes are drawn wider than the longitudinal scale for legibility; the scale bar shows distance along roads.
+Roads take shared length, lane count and speed limit unless an approach has its own settings (below). The corridor link length is set separately and has finite storage.
+
+### Grid networks
+
+The planner places junctions on whole-number grid cells and chooses each junction's arms (three or four; two-arm bends are not modelled).
+
+- **Connection.** An arm joins the nearest junction in its row or column, which must have the facing arm. An arm with no junction in line becomes a boundary road with an approach and an exit. Neighbouring cells are one block length apart (the shared link-length setting); junctions further apart along a row or column are joined by a proportionally longer link, with finite storage like any link.
+- **Connectivity checks** block a run when:
+  - an arm runs into a junction without the facing arm;
+  - two roads cross, or pass within a junction half-width of each other, anywhere except at a junction. Boundary roads are checked at the longer of their approach and exit lengths;
+  - some junctions are not connected to the rest;
+  - traffic on some road could not reach an exit without a U-turn.
+- **Signals.** Every grid junction is signalised and runs the shared plan, with its own offset (0–600 s) delaying the start of its plan. Two-phase per-junction greens work as on the corridor. A custom phase plan may list any movement offered at some junction; a junction without that movement ignores it.
+- **Demand.** The directional veh/h apply in full to every boundary approach facing that way, unless the approach has its own demand. A model check says how many approaches share each direction.
+- **Naming.** Boundary approaches are named after their junction (`A west approach`, link `A-west`); links between junctions are `A → B`. Traffic keeps left. Lane 0 is the kerbside lane and the highest lane index is the median lane. The map is a schematic, not a surveyed layout. Lane widths and junction boxes are drawn wider than the longitudinal scale for legibility; the scale bar shows distance along roads.
 
 ### Per-approach settings
 
-Any approach (boundary or corridor link) can override lanes (1–3), speed limit, length (boundary approaches only), left and right turning shares, and a right-turn pocket length. A blank setting uses the shared value. Exit roads always use the shared lane count and speed. Junction boxes are sized for the widest approach.
+Any approach (boundary or corridor link) can override lanes (1–3), speed limit, length (boundary approaches only), left and right turning shares, and a right-turn pocket length. A boundary approach can also have its own demand (0–3600 veh/h), which replaces the directional value for that approach only; the demand multiplier and profile still apply. Arrival streams are seeded per approach, so changing one approach's demand leaves every other approach's arrivals unchanged under paired seeds. A blank setting uses the shared value. Exit roads always use the shared lane count and speed. Junction boxes are sized for the widest approach.
 
 ### Right-turn pockets
 
@@ -39,6 +55,7 @@ Free-form network drawing, median openings and U-turns are not yet available.
 ## Routes and lanes
 
 - Each vehicle's whole route is drawn at departure from declared turning shares (left %, right %, remainder straight), applied at every junction it reaches. Movements a junction does not offer are removed and the remaining shares rescaled; if none of the remaining shares is positive, the available movements are equally likely. U-turns are not offered.
+- In a network with loops (a grid), a route never returns to a junction it has already passed: movements leading back to one are removed before the shares are applied. If every movement would revisit a junction, the vehicle takes the movement with the fewest junctions left to an exit, so every route ends. There is no route choice by travel time or congestion. Neither rule changes any route on the fixed templates, which have no loops.
 - Left turns use the kerbside lane and right turns the median through lane, then the pocket where one exists. Straight-ahead vehicles enter the through lane with most room and keep their lane index through a junction. Pockets are never used by straight or left-turning traffic.
 - There are no mid-link lane changes. A vehicle that needs a different lane for its next junction takes it while crossing the upstream junction. A turning vehicle at the head of a shared lane therefore blocks straight traffic behind it.
 
@@ -90,7 +107,7 @@ Demand at each boundary approach is a Poisson process whose rate is the arm's ve
 
 The profile is a list of 1–48 factors (0–3) with a period of 1–60 minutes, shared by every approach. The last factor holds after the profile ends. Presets (constant, mid-run peak, short surge, steadily rising) are written out as explicit factors spanning the run in six periods, so a saved scenario reproduces exactly.
 
-Arrivals use the cumulative-intensity method: each arrival spends one unit exponential draw across the periods. A constant profile therefore gives exactly the v0.3 arrivals. A profile whose factors average 1 over the run gives the same number of requests, redistributed in time. The model checks note profiles that add or remove demand overall. On the corridor, the north and south values apply to each junction's side road. Separate seeded streams generate arrival times, vehicle attributes and route draws per boundary approach, so paired seeds keep arrivals and the fleet identical across timing, turning-share and geometry alternatives. Every vehicle uses exactly two route draws, so changing turning shares changes routes but not the arrival times or vehicle types. Vehicle shares must total 100%.
+Arrivals use the cumulative-intensity method: each arrival spends one unit exponential draw across the periods. A constant profile therefore gives exactly the v0.3 arrivals. A profile whose factors average 1 over the run gives the same number of requests, redistributed in time. The model checks note profiles that add or remove demand overall. On the corridor, the north and south values apply to each junction's side road. Separate seeded streams generate arrival times, vehicle attributes and route draws per boundary approach, so paired seeds keep arrivals and the fleet identical across timing, turning-share and geometry alternatives. Every vehicle uses a fixed number of route draws (two on the fixed templates; two per junction plus two on a grid), so changing turning shares changes routes but not the arrival times or vehicle types. Vehicle shares must total 100%.
 
 Physics uses 0.2-second steps; playback speed changes wall-clock execution only. Replication *i* uses seed `base + i`.
 

@@ -1,5 +1,5 @@
 import { DIRECTIONS, ENGINE_VERSION, FLEET, fingerprint, validateScenario } from '../model/project.js';
-import { approachLane, chooseRoute, compileNetwork, junctionPath, movementsFrom, pathsConflict } from '../model/network.js';
+import { approachLane, chooseRoute, compileNetwork, entryDemand, junctionPath, movementsFrom, pathsConflict } from '../model/network.js';
 import { randomGenerator } from './random.js';
 import { movementGreen, signalState } from './signals.js';
 
@@ -104,7 +104,7 @@ export class Simulation {
   rateAt(link, t) {
     const { period, factors } = this.scenario.demand.profile;
     const index = Math.min(factors.length - 1, Math.floor(t / period + 1e-9));
-    return this.scenario.demand[link.demandKey] * this.scenario.demand.multiplier * factors[index] / 3600;
+    return entryDemand(this.scenario, link) * this.scenario.demand.multiplier * factors[index] / 3600;
   }
 
   // Next arrival of a piecewise-constant Poisson process after `from`: one unit
@@ -138,7 +138,7 @@ export class Simulation {
     const speedFactor = spec.speedFactor * (0.9 + random() * 0.2);
     const desired = link.speed * speedFactor;
     // A fixed number of route draws keeps later vehicles' streams aligned.
-    const draws = [link.routeRandom(), link.routeRandom()];
+    const draws = Array.from({ length: this.network.routeDraws }, () => link.routeRandom());
     const { route, moves } = chooseRoute(this.network, linkId, this.scenario.turning, draws);
     const measured = departure >= this.scenario.run.warmup;
     if (measured) { this.measuredRequested++; this.measuredPeople += spec.occupancy; }

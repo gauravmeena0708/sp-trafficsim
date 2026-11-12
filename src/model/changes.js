@@ -9,7 +9,7 @@ import { TEMPLATES } from './network.js';
 const ARM = { north: 'North', east: 'East', south: 'South', west: 'West' };
 export function approachName(id) {
   if (ARM[id]) return `${ARM[id]} approach`;
-  const side = id.match(/^([A-Z])-(north|south)$/);
+  const side = id.match(/^([A-Z])-(north|east|south|west)$/);
   if (side) return `${side[1]} ${side[2]} approach`;
   const link = id.match(/^([A-Z])-([A-Z])$/);
   if (link) return `${link[1]} → ${link[2]} link`;
@@ -23,12 +23,13 @@ const fmt = (value, unit = 'none') => value === undefined ? 'shared value' : `${
 function describe(path) {
   const [head, a, b, c] = path;
   if (head === 'template') return { kind: 'design', label: 'Layout template', unit: 'template' };
-  if (head === 'geometry') return { kind: 'design', label: { length: 'Approach length (shared)', lanes: 'Lanes per direction (shared)', speed: 'Speed limit (shared)', spacing: 'Link A–B length' }[a] ?? a, unit: { length: 'm', spacing: 'm', speed: 'kmh' }[a] };
+  if (head === 'layout') return { kind: 'design', label: `Junction ${a} ${{ position: 'grid position', arms: 'arms', offset: 'signal offset' }[b] ?? b}`, unit: b === 'offset' ? 'layoutSeconds' : 'layout' };
+  if (head === 'geometry') return { kind: 'design', label: { length: 'Approach length (shared)', lanes: 'Lanes per direction (shared)', speed: 'Speed limit (shared)', spacing: 'Link length between junctions' }[a] ?? a, unit: { length: 'm', spacing: 'm', speed: 'kmh' }[a] };
   if (head === 'approaches') {
     const field = APPROACH_FIELDS[b];
-    const unit = { length: 'm', pocket: 'm', speed: 'kmh', left: 'pct', right: 'pct' }[b];
-    // Turning shares describe demand, not layout.
-    return { kind: b === 'left' || b === 'right' ? 'assumption' : 'design', label: `${approachName(a)}: ${(field?.label ?? b).replace(/ \(.*\)$/, '').toLowerCase()}`, unit };
+    const unit = { length: 'm', pocket: 'm', speed: 'kmh', left: 'pct', right: 'pct', demand: 'vph' }[b];
+    // Turning shares and demand are assumptions, not layout.
+    return { kind: ['left', 'right', 'demand'].includes(b) ? 'assumption' : 'design', label: `${approachName(a)}: ${(field?.label ?? b).replace(/ \(.*\)$/, '').toLowerCase()}`, unit };
   }
   if (head === 'signals') {
     if (a === 'junctions') return { kind: 'design', label: `Junction ${b} ${GROUP[c] ?? c} green`, unit: 's' };
@@ -64,12 +65,17 @@ function show(value, unit) {
     return `${preset} (${value.factors.join(', ')} × every ${+(value.period / 60).toFixed(2)} min)`;
   }
   if (unit === 'plan') return Array.isArray(value) ? `${value.length} phases` : 'none';
+  if (unit === 'layout' || unit === 'layoutSeconds') return value === undefined ? 'no junction' : unit === 'layout' ? value : fmt(value, 's');
   return fmt(value, unit);
 }
 
+// A grid layout is compared junction by junction, in words.
+const layoutView = layout => layout ? Object.fromEntries(layout.nodes.map(n => [n.id, {
+  position: `column ${n.col + 1}, row ${n.row + 1}`, arms: n.arms.length === 4 ? 'all four' : n.arms.join(', '), offset: n.offset }])) : undefined;
+
 export function scenarioChanges(baseline, alternative) {
-  const { id: _a, name: _b, ...base } = baseline;
-  const { id: _c, name: _d, ...alt } = alternative;
+  const { id: _a, name: _b, ...base } = { ...baseline, layout: layoutView(baseline.layout) };
+  const { id: _c, name: _d, ...alt } = { ...alternative, layout: layoutView(alternative.layout) };
   const before = flatten(base), after = flatten(alt);
   const keys = [...new Set([...before.keys(), ...after.keys()])];
   const changes = [];

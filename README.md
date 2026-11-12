@@ -1,6 +1,6 @@
 # Junction — Traffic planning workbench
 
-A browser-based workbench for exploring road-planning ideas before implementation. This repository starts the first phase of the [product plan](docs/product-spec.md), with four-arm, T-junction and two-junction corridor templates on an explicit network model, turning traffic, spillback between junctions, and reproducible signal-timing experiments.
+A browser-based workbench for exploring road-planning ideas before implementation. This repository starts the first phase of the [product plan](docs/product-spec.md), with four-arm, T-junction, two-junction corridor, roundabout and custom grid networks on an explicit network model, turning traffic, spillback between junctions, and reproducible signal-timing experiments.
 
 **Current status: illustrative prototype, not field-calibrated or validated.** Do not interpret its results as engineering predictions.
 
@@ -37,7 +37,7 @@ Pass `--browser <path>` to choose a browser, or `--source` to test the source tr
 
 ## Try a study
 
-1. Choose a layout template: four-arm, T-junction, two-junction corridor or single-lane roundabout. Then configure shared road lengths, lane counts, speed limits, directional demand, turning shares and vehicle mix. Under **Approach settings**, give any approach its own lanes, speed, length, turning shares or a right-turn pocket. On the corridor, set the link length, junction B's offset, and optionally each junction's own green times.
+1. Choose a layout template: four-arm, T-junction, two-junction corridor, single-lane roundabout, or a **custom grid network**. In a grid, place up to eight signalised junctions, choose each one's arms and signal offset, and the editor connects them along rows and columns, flagging arms that face nothing, roads that cross without a junction, and disconnected parts. Then configure shared road lengths, lane counts, speed limits, directional demand, turning shares and vehicle mix. Under **Approach settings**, give any approach its own lanes, speed, length, turning shares or a right-turn pocket, and any boundary approach its own demand. On the corridor, set the link length, junction B's offset, and optionally each junction's own green times.
 2. Review the **Model checks** under the settings. They separate blocking errors from assumptions worth reviewing, such as ignored demand, right-turners sharing a single lane, or demand above an indicative discharge rate.
 3. Set signal timings. The default plan has independent east–west and north–south greens from **5 to 300 seconds**, with separate yellow and all-red intervals.
    - Choose **Custom phases** to decide which movements go together: for example protected right-turn phases, or one arm at a time.

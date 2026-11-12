@@ -4,7 +4,7 @@ import { modelChecks } from './model/checks.js';
 import { changeSummary, changeText, scenarioChanges } from './model/changes.js';
 import { Simulation, STEP } from './simulation/engine.js';
 import { PHASE_PRESETS, cycleLength, phasePreset } from './simulation/signals.js';
-import { TEMPLATES, analysePhase, approachSettings, compileNetwork, configurableApproaches, inboundLinks, movementLabel, nodeMovements } from './model/network.js';
+import { ARM_ORDER, GRID, TEMPLATES, analysePlanPhase, approachSettings, compileNetwork, configurableApproaches, defaultLayout, entryDemand, gridNeighbour, inboundLinks, layoutErrors, movementLabel, planMovements } from './model/network.js';
 import { DEMAND_LEVELS, PRECISION, sweepConfigurations, sweepGroupLabel, sweepTargets } from './simulation/experiments.js';
 import { explainApproach } from './diagnostics/explain.js';
 import { NetworkCanvas } from './ui/canvas.js';
@@ -23,6 +23,7 @@ let simulation;
 let playing = false;
 let selectedLink = 'west';
 let editingApproach = null;
+let selectedGridNode = null;
 let accumulator = 0;
 let lastFrame = performance.now();
 let lastMetrics = 0;
@@ -61,7 +62,7 @@ function approachSection(network) {
   if (!approaches.some(l => l.id === editingApproach)) editingApproach = approaches[0].id;
   const link = network.byId[editingApproach];
   const own = s.approaches[link.id] ?? {};
-  const shared = { lanes: s.geometry.lanes, speed: s.geometry.speed, length: s.geometry.length, left: s.turning.left, right: s.turning.right, pocket: 0 };
+  const shared = { lanes: s.geometry.lanes, speed: s.geometry.speed, length: s.geometry.length, left: s.turning.left, right: s.turning.right, pocket: 0, demand: s.demand[link.demandKey] };
   const roundabout = s.template === 'roundabout';
   const signalised = network.nodeById[link.to].control === 'signal';
   const fields = Object.entries(APPROACH_FIELDS).filter(([key, f]) => !(f.entryOnly && link.kind !== 'entry') && !(roundabout && key === 'lanes') && !(key === 'pocket' && !signalised));
@@ -69,7 +70,7 @@ function approachSection(network) {
   return `<section class="settings-section"><div class="section-title"><h3>Approach settings</h3><span class="section-number">02</span></div>
       <label class="field">Approach<select id="approach-edit">${approaches.map(l => `<option value="${esc(l.id)}" ${l.id === link.id ? 'selected' : ''}>${esc(l.label)}${s.approaches[l.id] ? ' · customised' : ''}</option>`).join('')}</select></label>
       <div class="input-grid">${fields.map(([key, f]) => `<label class="field"><span>${esc(f.label)}</span><input type="number" data-override="${key}" value="${own[key] ?? ''}" placeholder="${shared[key]} (shared)" min="${f.min}" max="${f.max}"></label>`).join('')}</div>
-      <p class="field-hint">Leave a field blank to use the shared value. Effective here: ${effective.lanes} lane${effective.lanes > 1 ? 's' : ''}, ${effective.speed} km/h, ${effective.left}% left, ${effective.right}% right${effective.pocket ? `, ${effective.pocket} m right-turn pocket` : ''}. A pocket adds a median lane for right-turners at the stop line; when it is full they wait at its entrance and block the lane behind them.</p>
+      <p class="field-hint">Leave a field blank to use the shared value. Effective here: ${link.kind === 'entry' ? `${entryDemand(s, link)} veh/h, ` : ''}${effective.lanes} lane${effective.lanes > 1 ? 's' : ''}, ${effective.speed} km/h, ${effective.left}% left, ${effective.right}% right${effective.pocket ? `, ${effective.pocket} m right-turn pocket` : ''}. A pocket adds a median lane for right-turners at the stop line; when it is full they wait at its entrance and block the lane behind them.</p>
       ${s.approaches[link.id] ? '<button type="button" class="text-button" id="clear-approach">Use shared values for this approach</button>' : ''}
     </section>`;
 }
@@ -79,11 +80,10 @@ function approachSection(network) {
 const GLYPHS = { left: '↰', straight: '↑', right: '↱' };
 function phaseEditor(network) {
   const s = active();
-  const node = network.nodes.find(n => n.control === 'signal');
-  const offered = nodeMovements(network, node);
+  const offered = planMovements(network);
   const arms = [...new Set(offered.map(m => m.arm))];
   const cards = s.signals.phases.map((p, i) => {
-    const { permitted } = analysePhase(network, node, p.movements);
+    const { permitted } = analysePlanPhase(network, p.movements);
     const rows = arms.map(arm => `<div class="movement-row"><span>${arm[0].toUpperCase() + arm.slice(1)}</span>${['left', 'straight', 'right'].map(movement => {
       const id = `${arm}:${movement}`;
       if (!offered.some(o => o.id === id)) return '<span class="movement none" aria-hidden="true">·</span>';
@@ -94,6 +94,52 @@ function phaseEditor(network) {
   }).join('');
   return `${cards}<div class="phase-actions"><button type="button" class="button secondary" data-phase-action="add" ${s.signals.phases.length >= 8 ? 'disabled' : ''}>Add phase</button><label class="field"><span>Start from a preset</span><select data-phase-action="preset"><option value="">Choose…</option>${Object.entries(PHASE_PRESETS).map(([key, label]) => `<option value="${key}">${esc(label)}</option>`).join('')}</select></label></div>
     <p class="field-hint">Tick the movements that get green together. A right turn crossing opposing traffic that is also green is <em>permitted</em> and gives way; give it its own phase to protect it. Crossing straight or left movements cannot share a phase.</p>`;
+}
+
+// Grid layout editor. Each cell is a button: a junction cell selects it, an
+// empty cell adds a junction there. Arm stubs and roads through empty cells are
+// drawn for orientation; the model checks report what does not connect.
+const armName = arm => arm[0].toUpperCase() + arm.slice(1);
+function gridEditor() {
+  const s = active();
+  const nodes = s.layout.nodes;
+  if (!nodes.some(n => n.id === selectedGridNode)) selectedGridNode = nodes[0]?.id ?? null;
+  const full = nodes.length >= GRID.maxNodes;
+  const through = new Map();
+  for (const n of nodes) for (const [arm, facing] of [['east', 'west'], ['south', 'north']]) {
+    const other = n.arms.includes(arm) ? gridNeighbour(nodes, n, arm) : null;
+    if (!other?.arms.includes(facing)) continue;
+    for (let c = n.col + 1; c < other.col; c++) through.set(`${c},${n.row}`, [...(through.get(`${c},${n.row}`) ?? []), 'road-ew']);
+    for (let r = n.row + 1; r < other.row; r++) through.set(`${n.col},${r}`, [...(through.get(`${n.col},${r}`) ?? []), 'road-ns']);
+  }
+  const cells = [];
+  for (let row = 0; row < GRID.rows; row++) for (let col = 0; col < GRID.cols; col++) {
+    const n = nodes.find(x => x.col === col && x.row === row);
+    if (n) {
+      const arms = n.arms.length === 4 ? 'all four arms' : `arms ${ARM_ORDER.filter(a => n.arms.includes(a)).join(', ')}`;
+      cells.push(`<button type="button" class="grid-cell junction" data-grid-select="${n.id}" aria-pressed="${n.id === selectedGridNode}" aria-label="Junction ${n.id}: ${arms}">${ARM_ORDER.filter(a => n.arms.includes(a)).map(a => `<span class="stub stub-${a}" aria-hidden="true"></span>`).join('')}<strong>${n.id}</strong></button>`);
+    } else {
+      cells.push(`<button type="button" class="grid-cell empty ${(through.get(`${col},${row}`) ?? []).join(' ')}" data-grid-add="${col},${row}" aria-label="Add a junction at column ${col + 1}, row ${row + 1}" ${full ? 'disabled' : ''}><span aria-hidden="true">+</span></button>`);
+    }
+  }
+  const node = nodes.find(n => n.id === selectedGridNode);
+  const panel = node ? `<fieldset class="grid-node"><legend>Junction ${node.id} · column ${node.col + 1}, row ${node.row + 1}</legend>
+      <div class="arm-toggles">${ARM_ORDER.map(arm => `<label class="checkbox-line"><input type="checkbox" data-grid-arm="${arm}" ${node.arms.includes(arm) ? 'checked' : ''}> ${armName(arm)}</label>`).join('')}</div>
+      <div class="grid-node-actions"><label class="field"><span>Signal offset (s)</span><input type="number" data-grid-offset value="${node.offset}" min="0" max="600"></label>
+      <button type="button" class="text-button" data-grid-remove ${nodes.length <= 1 ? 'disabled' : ''}>Remove junction ${node.id}</button></div></fieldset>` : '';
+  return `<div class="grid-editor" role="group" aria-label="Junction grid, ${GRID.cols} columns by ${GRID.rows} rows" style="--grid-cols:${GRID.cols}">${cells.join('')}</div>${panel}
+    <p class="field-hint">Select a junction to change its arms, or an empty cell to add one (up to ${GRID.maxNodes}). An arm joins the nearest junction in its row or column, which needs the facing arm; otherwise it becomes a boundary road. Roads may only meet at junctions. The offset delays the start of that junction's signal plan.</p>`;
+}
+
+// Replace the layout (never mutate it in place), drop settings for roads that
+// no longer exist once the layout is valid, and keep focus on the edited control.
+function layoutChanged(nodes, focus) {
+  active().layout = { nodes };
+  const dropped = layoutErrors(active()).length ? [] : pruneForTemplate();
+  renderSettings();
+  if (focus) document.querySelector(focus)?.focus();
+  inputsChanged();
+  if (dropped.length) notice(`Layout changed. Settings for ${dropped.join(', ')} no longer apply and were removed.`);
 }
 
 function junctionSignalFields(network) {
@@ -110,6 +156,7 @@ function junctionSignalFields(network) {
 function renderSettings() {
   const corridor = active().template === 'corridor';
   const roundabout = active().template === 'roundabout';
+  const grid = active().template === 'grid';
   const network = compileNetwork(active());
   $('scenario-select').innerHTML = project.scenarios.map((s, i) => `<option value="${esc(s.id)}" ${s.id === activeId ? 'selected' : ''}>${String(i + 1).padStart(2, '0')} / ${esc(s.name)}</option>`).join('');
   $('settings-form').innerHTML = `
@@ -117,8 +164,9 @@ function renderSettings() {
     <section class="settings-section"><div class="section-title"><h3>Road layout</h3><span class="section-number">01</span></div>
       <label class="field">Layout template<select data-path="template">${Object.entries(TEMPLATES).map(([key, label]) => `<option value="${key}" ${active().template === key ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></label>
       ${rangeField('Approach length (m)', 'geometry.length', 100, 600, 'metres')}
-      <div class="input-grid">${numberField('Lanes / direction', 'geometry.lanes', 1, 3)}${numberField('Speed limit (km/h)', 'geometry.speed', 20, 80)}${corridor ? numberField('Link A–B length (m)', 'geometry.spacing', 60, 600) : ''}</div>
-      <p class="field-hint">Shared dimensions on every road.${corridor ? ' The link between junctions has finite storage: when it fills, junction A cannot release traffic into it.' : ''} Left turns use the kerbside lane and right turns the median lane; there are no mid-block lane changes.</p>
+      <div class="input-grid">${numberField('Lanes / direction', 'geometry.lanes', 1, 3)}${numberField('Speed limit (km/h)', 'geometry.speed', 20, 80)}${corridor ? numberField('Link A–B length (m)', 'geometry.spacing', 60, 600) : ''}${grid ? numberField('Block length (m)', 'geometry.spacing', 60, 600) : ''}</div>
+      <p class="field-hint">Shared dimensions on every road.${corridor || grid ? ' Links between junctions have finite storage: when one fills, the junction upstream cannot release traffic into it.' : ''}${grid ? ' The block length is the road between neighbouring grid cells; boundary roads use the approach length.' : ''} Left turns use the kerbside lane and right turns the median lane; there are no mid-block lane changes.</p>
+      ${grid && active().layout ? gridEditor() : ''}
     </section>
     ${approachSection(network)}
     <section class="settings-section"><div class="section-title"><h3>Signal timings</h3><span class="section-number">03</span></div>
@@ -130,7 +178,7 @@ function renderSettings() {
       ${active().signals.mode === 'twoPhase' ? junctionSignalFields(network) : ''}
     </section>
     <section class="settings-section"><div class="section-title"><h3>Traffic demand</h3><span class="section-number">04</span></div><div class="input-grid">${DIRECTIONS.filter(d => !(d === 'north' && active().template === 'tJunction')).map(d => numberField(`${d[0].toUpperCase() + d.slice(1)} (veh/h)`, `demand.${d}`, 0, 3600)).join('')}</div>
-      ${corridor ? '<p class="field-hint">North and south values apply to each junction’s side road.</p>' : ''}
+      ${corridor ? '<p class="field-hint">North and south values apply to each junction’s side road.</p>' : ''}${grid ? '<p class="field-hint">Each value applies in full to every boundary approach facing that way (for example, every north boundary road receives the north veh/h), unless the approach has its own demand under Approach settings.</p>' : ''}
       <div class="input-grid">${numberField('Left turn (%)', 'turning.left', 0, 100)}${numberField('Right turn (%)', 'turning.right', 0, 100)}</div>
       <p class="field-hint">Shared turning shares apply wherever an approach has none of its own; the remainder goes straight. At the roundabout, left, straight and right mean the first, second and third exit. Unavailable movements are dropped and the remaining shares rescaled.</p>
       <label class="field" style="margin-top:12px">Demand assumption<select data-path="demand.multiplier"><option value="0.75" ${active().demand.multiplier === .75 ? 'selected' : ''}>Low · 0.75×</option><option value="1" ${active().demand.multiplier === 1 ? 'selected' : ''}>Central · 1.00×</option><option value="1.25" ${active().demand.multiplier === 1.25 ? 'selected' : ''}>High · 1.25×</option>${![.75, 1, 1.25].includes(active().demand.multiplier) ? `<option selected value="${active().demand.multiplier}">Custom · ${active().demand.multiplier}×</option>` : ''}</select></label>
@@ -289,16 +337,17 @@ function inputsChanged() {
 // Drop per-approach and per-junction settings the new layout cannot use.
 function pruneForTemplate() {
   const s = active();
+  const dropped = [];
+  if (s.template !== 'grid' && s.layout) { s.layout = null; dropped.push('the grid layout'); }
   const network = compileNetwork(s);
   const links = new Set(configurableApproaches(network).map(l => l.id));
   const nodes = new Set(network.nodes.filter(n => n.control === 'signal').map(n => n.id));
-  const dropped = [...Object.keys(s.approaches).filter(id => !links.has(id)), ...Object.keys(s.signals.junctions).filter(id => !nodes.has(id))];
+  dropped.push(...Object.keys(s.approaches).filter(id => !links.has(id)), ...Object.keys(s.signals.junctions).filter(id => !nodes.has(id)));
   for (const id of Object.keys(s.approaches)) if (!links.has(id)) delete s.approaches[id];
   for (const id of Object.keys(s.signals.junctions)) if (!nodes.has(id)) delete s.signals.junctions[id];
   // Custom phases keep only movements the new layout offers; too few phases left reverts to two-phase.
-  const signalNode = network.nodes.find(n => n.control === 'signal');
-  if (s.signals.mode === 'custom' && signalNode) {
-    const offered = new Set(nodeMovements(network, signalNode).map(m => m.id));
+  if (s.signals.mode === 'custom' && network.nodes.some(n => n.control === 'signal')) {
+    const offered = new Set(planMovements(network).map(m => m.id));
     const removed = s.signals.phases.flatMap(p => p.movements.filter(m => !offered.has(m)));
     s.signals.phases = s.signals.phases.map(p => ({ ...p, movements: p.movements.filter(m => offered.has(m)) })).filter(p => p.movements.length);
     if (removed.length) dropped.push(`phase movements (${removed.map(movementLabel).join(', ')})`);
@@ -312,8 +361,7 @@ $('settings-form').addEventListener('change', event => {
 });
 $('settings-form').addEventListener('change', event => {
   if (event.target.dataset.phaseAction !== 'preset' || !event.target.value) return;
-  const network = compileNetwork(active());
-  const offered = nodeMovements(network, network.nodes.find(n => n.control === 'signal')).map(m => m.id);
+  const offered = planMovements(compileNetwork(active())).map(m => m.id);
   active().signals.phases = phasePreset(event.target.value, offered);
   renderSettings(); inputsChanged();
 });
@@ -329,6 +377,26 @@ $('settings-form').addEventListener('click', event => {
     const i = Number(event.target.closest('button').dataset.phase);
     active().signals.phases = active().signals.phases.filter((_, k) => k !== i);
     renderSettings(); inputsChanged();
+    return;
+  }
+  const cell = event.target.closest('button[data-grid-add], button[data-grid-select], button[data-grid-remove]');
+  if (cell) {
+    const nodes = active().layout.nodes;
+    if (cell.dataset.gridSelect) {
+      selectedGridNode = cell.dataset.gridSelect;
+      renderSettings();
+      document.querySelector(`[data-grid-select="${selectedGridNode}"]`)?.focus();
+    } else if (cell.dataset.gridAdd) {
+      const [col, row] = cell.dataset.gridAdd.split(',').map(Number);
+      const id = [...GRID.ids].find(letter => !nodes.some(n => n.id === letter));
+      selectedGridNode = id;
+      layoutChanged([...nodes, { id, col, row, arms: [...ARM_ORDER], offset: 0 }], `[data-grid-select="${id}"]`);
+    } else {
+      const removed = selectedGridNode;
+      selectedGridNode = null;
+      layoutChanged(nodes.filter(n => n.id !== removed), '.grid-cell.junction');
+      notice(`Removed junction ${removed}.`);
+    }
     return;
   }
   if (event.target.id !== 'clear-approach') return;
@@ -368,14 +436,25 @@ $('settings-form').addEventListener('input', event => {
     inputsChanged();
     return;
   }
+  const { gridArm, gridOffset } = event.target.dataset;
+  if (gridArm !== undefined) {
+    const nodes = active().layout.nodes.map(n => n.id !== selectedGridNode ? n : { ...n, arms: ARM_ORDER.filter(a => a === gridArm ? event.target.checked : n.arms.includes(a)) });
+    layoutChanged(nodes, `[data-grid-arm="${gridArm}"]`);
+    return;
+  }
+  if (gridOffset !== undefined) {
+    const offset = event.target.value === '' ? NaN : Number(event.target.value);
+    active().layout = { nodes: active().layout.nodes.map(n => n.id !== selectedGridNode ? n : { ...n, offset }) };
+    inputsChanged();
+    return;
+  }
   const { planMode, phase, phaseField, movement } = event.target.dataset;
   if (planMode !== undefined) {
     const signals = active().signals;
     signals.mode = event.target.value;
     if (signals.mode === 'custom' && !signals.phases.length) {
       // Start from the equivalent of the two-phase plan so nothing changes until edited.
-      const network = compileNetwork(active());
-      const offered = nodeMovements(network, network.nodes.find(n => n.control === 'signal')).map(m => m.id);
+      const offered = planMovements(compileNetwork(active())).map(m => m.id);
       signals.phases = phasePreset('twoPhase', offered).map((p, i) => ({ ...p, green: i === 0 ? signals.eastWest : signals.northSouth }));
     }
     renderSettings(); inputsChanged();
@@ -417,6 +496,7 @@ $('settings-form').addEventListener('input', event => {
   if (path === 'name') {
     $('scenario-select').selectedOptions[0].textContent = active().name;
   } else if (path === 'template') {
+    if (value === 'grid' && !active().layout) active().layout = defaultLayout();
     const dropped = pruneForTemplate();
     renderSettings(); resetSimulation();
     if (dropped.length) { validate(); persist(); notice(`Layout changed. Settings for ${dropped.join(', ')} do not apply to this layout and were removed.`); return; }
