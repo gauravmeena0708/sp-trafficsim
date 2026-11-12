@@ -284,6 +284,22 @@ await check('comparison time charts show a legend, a crosshair tooltip and a tab
   await screenshot('time-charts');
 });
 
+await check('alternatives list their changes and "until precise" comparisons give a verdict', async () => {
+  await evaluate(`document.getElementById('tab-design').click()`);
+  // The active scenario is the duplicate created earlier; change one design input.
+  await evaluate(`(() => { const el = document.querySelector('input[type="number"][data-path="signals.eastWest"]'); el.value = '12'; el.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  assert(await evaluate(`!document.getElementById('change-summary').hidden`), 'change summary hidden for an alternative');
+  assert(await evaluate(`/East–west green: 40 s → 12 s/.test(document.getElementById('change-summary').textContent)`), 'change summary does not list the green change');
+  await evaluate(`document.getElementById('scenario-select').selectedIndex = 0; document.getElementById('scenario-select').dispatchEvent(new Event('change'))`);
+  assert(await evaluate(`document.getElementById('change-summary').hidden`), 'the baseline should not show a change summary');
+  await evaluate(`document.getElementById('tab-compare').click(); document.getElementById('replications').value = 'adaptive'; document.getElementById('compare-button').click()`);
+  await waitFor(`document.getElementById('experiment-status').textContent.includes('added until precise')`, 'adaptive comparison finished', 120000);
+  assert(await evaluate(`/Higher delay than baseline/.test(document.querySelector('#results-table .verdict')?.textContent ?? '')`), 'a 12 s east–west green should show a clear higher-delay verdict');
+  assert(await evaluate(`/1 change vs baseline/.test(document.querySelector('#results-table .change-list summary')?.textContent ?? '')`), 'results table does not list changes');
+  await evaluate(`document.getElementById('replications').value = '3'`);
+  await screenshot('adaptive-comparison');
+});
+
 await check('demand profile editor, live queue chart and persistent-queue list', async () => {
   await evaluate(`document.getElementById('tab-design').click()`);
   await evaluate(`(() => { const el = document.querySelector('[data-profile="preset"]'); el.value = 'surge'; el.dispatchEvent(new Event('input', { bubbles: true })); })()`);

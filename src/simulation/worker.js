@@ -1,8 +1,11 @@
-import { attachBaselineDifferences, runReplications, runSweep } from './experiments.js';
+import { PRECISION, attachBaselineDifferences, runAdaptiveComparison, runReplications, runSweep } from './experiments.js';
 
 self.onmessage = ({ data }) => {
   try {
-    if (data.type === 'compare') {
+    if (data.type === 'compare' && data.adaptive) {
+      const results = runAdaptiveComparison(data.scenarios, (seeds, open) => self.postMessage({ type: 'progress', text: `${seeds} seeds per scenario · ${open} alternative${open === 1 ? '' : 's'} not yet clear (limit ${PRECISION.max})` }));
+      self.postMessage({ type: 'complete', results });
+    } else if (data.type === 'compare') {
       const results = data.scenarios.map((s, i) => {
         const result = runReplications(s, data.count);
         self.postMessage({ type: 'progress', completed: i + 1, total: data.scenarios.length });

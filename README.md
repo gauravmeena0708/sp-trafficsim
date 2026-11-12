@@ -42,7 +42,9 @@ Pass `--browser <path>` to choose a browser, or `--source` to test the source tr
 3. Set independent east–west and north–south green durations from **5 to 300 seconds**. Yellow and all-red intervals are separate.
 4. Run, pause, change playback speed, and inspect each approach — including links between junctions — for signal holds, blocked receiving lanes and spillback.
 5. Duplicate the baseline and modify an alternative.
-6. Open **Compare options** and run paired-seed replications (with 95% intervals on the change from the baseline), or sweep either signal group's green under low, central and high demand.
+6. Open **Compare options** and run paired-seed replications, with 95% intervals on the change from the baseline. Or sweep either signal group's green under low, central and high demand.
+   - Choose **Until precise** to keep adding seeds until each alternative's verdict on delay is clear: lower, higher, no difference beyond the target, or inconclusive at 20 seeds.
+   - Each alternative lists exactly what it changes from the baseline, and flags demand or run changes that make it more than an infrastructure-only comparison.
 7. Compare delay with completed trips and waiting demand. Read the charts over time for queues that build and never clear, and the persistent-queue columns. Export per-seed CSV, print a report, or download the complete project JSON.
 
 Under **Traffic demand → Demand over time**, choose a preset (mid-run peak, short surge, steadily rising) or enter your own factors per period to model a peak rather than a flat hour. While a run plays, the inspector charts the selected approach's queue and lists **persistent queues**: approaches where vehicles waiting at the start of green were still there at its end, two cycles running.
