@@ -1,5 +1,5 @@
 import { DIRECTIONS, validateScenario } from './project.js';
-import { analysePhase, approachSettings, compileNetwork, configurableApproaches, movementLabel, movementsFrom } from './network.js';
+import { analysePlanPhase, approachSettings, compileNetwork, configurableApproaches, movementLabel, movementsFrom } from './network.js';
 import { cycleLength, movementGreenTime } from '../simulation/signals.js';
 
 // Indicative discharge used only for a pre-run warning. It is a common planning
@@ -21,6 +21,13 @@ export function modelChecks(s) {
 
   for (const d of DIRECTIONS) {
     if (!entryArms.has(d) && s.demand[d] > 0) findings.push({ level: 'warning', title: `${name(d)} demand is not used`, detail: `This layout has no ${d} approach, so its ${s.demand[d]} veh/h are ignored. Set it to 0 or choose another template.` });
+  }
+  if (network.template === 'grid') {
+    // Directional demand applies in full to every boundary approach facing that way.
+    const counts = DIRECTIONS.map(d => [d, network.links.filter(l => l.kind === 'entry' && l.demandKey === d).length]).filter(([, n]) => n > 1);
+    if (counts.length) findings.push({ level: 'info', title: 'Demand applies to each boundary approach', detail: `Every boundary approach receives the full veh/h for the direction it faces: ${counts.map(([d, n]) => `${n} ${d} approaches × ${s.demand[d]}`).join(', ')} veh/h. Lower the directional values if they describe the whole network edge.` });
+    const ring = network.links.some(l => l.kind === 'internal') && network.links.filter(l => l.kind === 'internal').length / 2 >= network.nodes.length;
+    if (ring) findings.push({ level: 'info', title: 'The network has loops', detail: 'Routes are chosen junction by junction from turning shares and never revisit a junction; if every movement would, the vehicle takes the one closest to an exit. There is no route choice by travel time.' });
   }
   for (const link of network.links.filter(l => l.kind === 'entry')) {
     if (!s.demand[link.demandKey]) findings.push({ level: 'info', title: `No demand on ${link.label}`, detail: 'No vehicles enter here. Check that this is intended.', target: link.id });
@@ -63,9 +70,8 @@ export function modelChecks(s) {
   }
   if (s.signals.mode === 'custom' && !roundabout) {
     if (Object.keys(s.signals.junctions).length) findings.push({ level: 'warning', title: 'Per-junction green times are ignored', detail: 'With custom phases, every signalised junction runs the same phase plan. Remove the per-junction greens or return to the two-phase plan.' });
-    const node = network.nodes.find(n => n.control === 'signal');
     s.signals.phases.forEach((p, i) => {
-      const { permitted } = analysePhase(network, node, p.movements);
+      const { permitted } = analysePlanPhase(network, p.movements);
       if (permitted.length) findings.push({ level: 'info', title: `Phase ${i + 1}: permitted right turns`, detail: `${permitted.map(movementLabel).join(', ')} cross${permitted.length === 1 ? 'es' : ''} opposing traffic that is also green, so ${permitted.length === 1 ? 'it gives' : 'they give'} way (4 s critical gap). Give right turns their own phase to protect them.` });
     });
   }

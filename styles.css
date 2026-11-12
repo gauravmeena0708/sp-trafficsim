@@ -1533,3 +1533,98 @@ li.change-assumption,li.change-run{
 .phase-actions .field{
   flex:1 1 100%
 }
+/* Grid layout editor: square cells, junctions with arm stubs, roads through empty cells. */
+.grid-editor{
+  display:grid;
+  grid-template-columns:repeat(var(--grid-cols),1fr);
+  gap:0;
+  margin:12px 0 8px;
+  border:1px solid var(--border);
+  border-radius:6px;
+  background:#f0f3e9;
+  overflow:hidden
+}
+.grid-cell{
+  position:relative;
+  aspect-ratio:1;
+  min-width:0;
+  border:0;
+  border-radius:0;
+  background:transparent;
+  padding:0;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  color:var(--muted)
+}
+.grid-cell.empty>span{
+  position:relative;
+  z-index:1;
+  font-size:14px;
+  opacity:.55
+}
+.grid-cell.empty:hover:not(:disabled)>span,.grid-cell.empty:focus-visible>span{
+  opacity:1
+}
+.grid-cell.empty:hover:not(:disabled){
+  background:#e5ebdb
+}
+.grid-cell.road-ew::before,.grid-cell.road-ns::after,.stub{
+  content:"";
+  position:absolute;
+  background:#5e6965
+}
+.grid-cell.road-ew::before{
+  left:0;right:0;top:calc(50% - 4px);height:8px
+}
+.grid-cell.road-ns::after{
+  top:0;bottom:0;left:calc(50% - 4px);width:8px
+}
+.stub-north{ top:0;left:calc(50% - 4px);width:8px;height:50% }
+.stub-south{ bottom:0;left:calc(50% - 4px);width:8px;height:50% }
+.stub-east{ right:0;top:calc(50% - 4px);height:8px;width:50% }
+.stub-west{ left:0;top:calc(50% - 4px);height:8px;width:50% }
+.grid-cell.junction strong{
+  position:relative;
+  z-index:1;
+  display:grid;
+  place-items:center;
+  width:26px;
+  height:26px;
+  border-radius:4px;
+  background:#64706a;
+  color:#fff;
+  font-size:12px
+}
+.grid-cell.junction[aria-pressed="true"] strong{
+  background:var(--green);
+  box-shadow:0 0 0 3px var(--accent)
+}
+.grid-node{
+  border:1px solid var(--border);
+  border-radius:6px;
+  padding:8px 10px;
+  margin:0 0 8px;
+  min-width:0
+}
+.grid-node legend{
+  font-size:12px;
+  font-weight:600;
+  padding:0 4px
+}
+.arm-toggles{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:2px 8px
+}
+.grid-node-actions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  align-items:flex-end;
+  justify-content:space-between;
+  margin-top:6px
+}
+.grid-node-actions .field{
+  flex:1 1 110px
+}

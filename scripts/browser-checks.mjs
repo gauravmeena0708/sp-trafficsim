@@ -331,6 +331,39 @@ await check('signal phase editor: presets, conflict validation, phase display an
   await evaluate(`(() => { const el = document.querySelector('[data-plan-mode]'); el.value = 'twoPhase'; el.dispatchEvent(new Event('input', { bubbles: true })); })()`);
 });
 
+await check('grid network editor: add junctions, connectivity checks, run and leave the grid', async () => {
+  const setInput = (selector, apply) => evaluate(`(() => { const el = document.querySelector('${selector}'); ${apply}; el.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  const validation = () => evaluate(`document.getElementById('validation').hidden ? '' : document.getElementById('validation').textContent`);
+  await evaluate(`document.getElementById('tab-design').click()`);
+  await setInput('[data-path="template"]', `el.value = 'grid'`);
+  assert(await evaluate(`document.querySelectorAll('.grid-cell.junction').length === 4`), 'the grid template should start with four junctions');
+  assert(await evaluate(`document.querySelectorAll('[data-link]').length === 16`), 'a 2 × 2 grid has 8 boundary and 8 internal approaches');
+  assert(!(await evaluate(`document.getElementById('play-button').disabled`)), 'the default grid should be runnable');
+  // A junction to the east of B alone: D's east boundary road crosses E's south one.
+  await evaluate(`document.querySelector('[data-grid-add="2,0"]').click()`);
+  assert(/crosses .* without a junction/.test(await validation()), `crossing roads should be rejected: ${await validation()}`);
+  assert(await evaluate(`document.activeElement?.dataset?.gridSelect === 'E'`), 'focus should move to the new junction');
+  await evaluate(`document.querySelector('[data-grid-add="2,1"]').click()`);
+  assert(!(await validation()), `completing the block should be valid: ${await validation()}`);
+  assert(await evaluate(`document.querySelectorAll('.grid-cell.junction').length === 6`), 'six junctions expected');
+  // F without a west arm leaves D's east arm facing nothing.
+  await setInput('[data-grid-arm="west"]', 'el.checked = false');
+  assert(/east arm runs into junction F, which has no west arm/.test(await validation()), `arm mismatch should be rejected: ${await validation()}`);
+  assert(await evaluate(`document.activeElement?.dataset?.gridArm === 'west'`), 'focus should stay on the arm toggle');
+  await setInput('[data-grid-arm="west"]', 'el.checked = true');
+  assert(!(await validation()), 'restoring the arm should be valid');
+  const overflow = await evaluate(`(() => { const p = document.querySelector('.settings-panel'); return p.scrollWidth - p.clientWidth; })()`);
+  assert(overflow <= 1, `settings panel scrolls sideways by ${overflow}px with the grid editor open`);
+  await evaluate(`document.getElementById('speed-select').value = '32'; document.getElementById('play-button').click()`);
+  await waitFor(`Number(document.getElementById('metric-completed').textContent.replace(/[^0-9]/g, '')) > 20`, 'vehicles complete trips across the grid', 40000);
+  await evaluate(`document.getElementById('play-button').click()`);
+  await evaluate(`document.querySelector('.grid-editor').scrollIntoView({ block: 'center' })`);
+  await screenshot('grid-network');
+  await setInput('[data-path="template"]', `el.value = 'fourArm'`);
+  assert(/the grid layout/.test(await evaluate(`document.getElementById('notice').textContent`)), 'leaving the grid should say the layout was removed');
+  assert(await evaluate(`document.querySelectorAll('[data-link]').length === 4 && !document.querySelector('.grid-editor')`), 'four-arm layout restored');
+});
+
 await check('demand profile editor, live queue chart and persistent-queue list', async () => {
   await evaluate(`document.getElementById('tab-design').click()`);
   await evaluate(`(() => { const el = document.querySelector('[data-profile="preset"]'); el.value = 'surge'; el.dispatchEvent(new Event('input', { bubbles: true })); })()`);

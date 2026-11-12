@@ -138,7 +138,7 @@ export class Simulation {
     const speedFactor = spec.speedFactor * (0.9 + random() * 0.2);
     const desired = link.speed * speedFactor;
     // A fixed number of route draws keeps later vehicles' streams aligned.
-    const draws = [link.routeRandom(), link.routeRandom()];
+    const draws = Array.from({ length: this.network.routeDraws }, () => link.routeRandom());
     const { route, moves } = chooseRoute(this.network, linkId, this.scenario.turning, draws);
     const measured = departure >= this.scenario.run.warmup;
     if (measured) { this.measuredRequested++; this.measuredPeople += spec.occupancy; }

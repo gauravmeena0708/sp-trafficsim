@@ -10,10 +10,11 @@ export const TEMPLATES = {
   tJunction: 'T-junction (no north arm)',
   corridor: 'Two-junction corridor',
   roundabout: 'Single-lane roundabout',
+  grid: 'Custom grid network',
 };
 export const ARM_VECTORS = { north: [0, -1], east: [1, 0], south: [0, 1], west: [-1, 0] };
 const ARM_LABELS = { north: 'North', east: 'East', south: 'South', west: 'West' };
-const ARM_ORDER = ['north', 'east', 'south', 'west'];
+export const ARM_ORDER = ['north', 'east', 'south', 'west'];
 const OPPOSITE = { north: 'south', east: 'west', south: 'north', west: 'east' };
 export const ROUNDABOUT_RADIUS = 24;
 export const armGroup = arm => (arm === 'east' || arm === 'west') ? 'eastWest' : 'northSouth';
@@ -75,8 +76,119 @@ function signalPlan(scenario, nodeId) {
   return { ...scenario.signals, ...(scenario.signals.junctions?.[nodeId] ?? {}) };
 }
 
+// ---------------------------------------------------------------- grid layouts
+// A grid layout places signalised junctions on whole-number columns and rows.
+// Roads run only along rows and columns: an arm joins the nearest junction in
+// its direction, which must have the facing arm; otherwise it is a boundary road.
+export const GRID = { cols: 4, rows: 4, maxNodes: 8, ids: 'ABCDEFGH' };
+export const defaultLayout = () => ({ nodes: [
+  { id: 'A', col: 0, row: 0, arms: [...ARM_ORDER], offset: 0 },
+  { id: 'B', col: 1, row: 0, arms: [...ARM_ORDER], offset: 0 },
+  { id: 'C', col: 0, row: 1, arms: [...ARM_ORDER], offset: 0 },
+  { id: 'D', col: 1, row: 1, arms: [...ARM_ORDER], offset: 0 },
+] });
+
+// Nearest junction from `node` in direction `arm` along its row or column.
+export function gridNeighbour(nodes, node, arm) {
+  const [vx, vy] = ARM_VECTORS[arm];
+  let best = null, bestDistance = Infinity;
+  for (const other of nodes) {
+    if (other === node) continue;
+    const dc = other.col - node.col, dr = other.row - node.row;
+    const inLine = vx ? dr === 0 && Math.sign(dc) === vx : dc === 0 && Math.sign(dr) === vy;
+    const distance = Math.abs(dc) + Math.abs(dr);
+    if (inLine && distance < bestDistance) { best = other; bestDistance = distance; }
+  }
+  return best;
+}
+
+const pitch = (scenario, half) => scenario.geometry.spacing + 2 * half;
+
+// Distance between two segments (0 when they touch or cross).
+function segmentDistance(a, b) {
+  const cross = (p, q, r) => (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+  const d1 = cross(b[0], b[1], a[0]), d2 = cross(b[0], b[1], a[1]), d3 = cross(a[0], a[1], b[0]), d4 = cross(a[0], a[1], b[1]);
+  if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return 0;
+  const toSegment = (p, [s, e]) => {
+    const lx = e[0] - s[0], ly = e[1] - s[1];
+    const t = Math.max(0, Math.min(1, ((p[0] - s[0]) * lx + (p[1] - s[1]) * ly) / (lx * lx + ly * ly || 1)));
+    return Math.hypot(p[0] - s[0] - lx * t, p[1] - s[1] - ly * t);
+  };
+  return Math.min(toSegment(a[0], b), toSegment(a[1], b), toSegment(b[0], a), toSegment(b[1], a));
+}
+
+// Structural checks on a grid layout, in planner's terms. Geometry problems
+// (arms with nothing facing them, roads crossing without a junction, parts of
+// the network not connected) are reported before the network is compiled.
+export function layoutErrors(scenario) {
+  const layout = scenario.layout;
+  const nodes = layout?.nodes;
+  if (!Array.isArray(nodes) || nodes.length < 1 || nodes.length > GRID.maxNodes) return [`A grid network needs 1–${GRID.maxNodes} junctions.`];
+  const errors = [];
+  const ids = new Set(), cells = new Set();
+  for (const n of nodes) {
+    if (typeof n?.id !== 'string' || !GRID.ids.includes(n.id) || n.id.length !== 1 || ids.has(n.id)) { errors.push('Each junction needs a unique name from A to H.'); continue; }
+    ids.add(n.id);
+    if (!Number.isInteger(n.col) || !Number.isInteger(n.row) || n.col < 0 || n.row < 0 || n.col >= GRID.cols || n.row >= GRID.rows) errors.push(`Junction ${n.id} must sit within the ${GRID.cols} × ${GRID.rows} grid.`);
+    else if (cells.has(`${n.col},${n.row}`)) errors.push(`Junction ${n.id} shares its grid cell with another junction.`);
+    cells.add(`${n.col},${n.row}`);
+    if (!Array.isArray(n.arms) || n.arms.some(a => !ARM_ORDER.includes(a)) || new Set(n.arms).size !== n.arms.length) errors.push(`Junction ${n.id} lists an invalid or repeated arm.`);
+    else if (n.arms.length < 3) errors.push(`Junction ${n.id} needs at least three arms. Two-arm bends are not modelled.`);
+    if (!Number.isFinite(n.offset) || n.offset < 0 || n.offset > 600) errors.push(`Junction ${n.id} signal offset must be between 0 and 600 seconds.`);
+  }
+  if (errors.length) return errors;
+
+  // Every arm that points at a junction must meet that junction's facing arm.
+  for (const n of nodes) for (const arm of n.arms) {
+    const other = gridNeighbour(nodes, n, arm);
+    if (other && !other.arms.includes(OPPOSITE[arm])) errors.push(`Junction ${n.id}'s ${arm} arm runs into junction ${other.id}, which has no ${OPPOSITE[arm]} arm. Add that arm to ${other.id} or remove the ${arm} arm from ${n.id}.`);
+  }
+  if (errors.length) return errors;
+
+  // Connected: every junction reachable from the first by roads.
+  const reached = new Set([nodes[0].id]);
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const n of nodes) {
+      if (!reached.has(n.id)) continue;
+      for (const arm of n.arms) {
+        const other = gridNeighbour(nodes, n, arm);
+        if (other && !reached.has(other.id)) { reached.add(other.id); grew = true; }
+      }
+    }
+  }
+  const apart = nodes.filter(n => !reached.has(n.id)).map(n => n.id);
+  if (apart.length) errors.push(`Junction${apart.length > 1 ? 's' : ''} ${apart.join(', ')} ${apart.length > 1 ? 'are' : 'is'} not connected to junction ${nodes[0].id}. Join ${apart.length > 1 ? 'them' : 'it'} with a road in line, or remove ${apart.length > 1 ? 'them' : 'it'}.`);
+
+  // Roads may only meet at junctions. Boundary roads run out to the longer of
+  // the approach and exit lengths; a road passing within a junction half-width
+  // of another counts as crossing.
+  const half = boxHalf(maxLanes(scenario));
+  const step = pitch(scenario, half);
+  const roads = [];
+  for (const n of nodes) for (const arm of n.arms) {
+    const [vx, vy] = ARM_VECTORS[arm];
+    const start = [n.col * step, n.row * step];
+    const other = gridNeighbour(nodes, n, arm);
+    if (other) { if (n.id < other.id) roads.push({ ends: [n.id, other.id], text: `the road from ${n.id} to ${other.id}`, seg: [start, [other.col * step, other.row * step]] }); continue; }
+    const length = half + Math.max(scenario.geometry.length, approachSettings(scenario, `${n.id}-${arm}`).length);
+    roads.push({ ends: [n.id], text: `${n.id}'s ${arm} boundary road`, seg: [start, [start[0] + vx * length, start[1] + vy * length]] });
+  }
+  for (let i = 0; i < roads.length; i++) for (let j = i + 1; j < roads.length; j++) {
+    const a = roads[i], b = roads[j];
+    if (a.ends.some(e => b.ends.includes(e))) continue;
+    if (segmentDistance(a.seg, b.seg) < half) errors.push(`${a.text[0].toUpperCase() + a.text.slice(1)} crosses ${b.text} without a junction. Add a junction where they meet, remove an arm, or shorten the approaches.`);
+  }
+  return errors;
+}
+
 function templateNodes(scenario, half) {
   const template = scenario.template ?? 'fourArm';
+  if (template === 'grid') {
+    const step = pitch(scenario, half);
+    return scenario.layout.nodes.map(n => ({ id: n.id, label: `Junction ${n.id}`, x: n.col * step, y: n.row * step, col: n.col, row: n.row,
+      arms: ARM_ORDER.filter(a => n.arms.includes(a)), offset: n.offset, control: 'signal' }));
+  }
   if (template === 'corridor') {
     return [
       { id: 'A', label: 'Junction A', x: 0, y: 0, arms: [...ARM_ORDER], offset: 0, control: 'signal' },
@@ -98,12 +210,18 @@ export function compileNetwork(scenario) {
   const nodes = templateNodes(scenario, half).map(n => ({ ...n, half, inbound: {}, outbound: {}, plan: signalPlan(scenario, n.id) }));
   const single = nodes.length === 1;
   const links = [];
-  const neighbour = (node, arm) => nodes.find(other => other !== node && Math.sign(other.x - node.x) === ARM_VECTORS[arm][0] && Math.sign(other.y - node.y) === ARM_VECTORS[arm][1] && other.arms.includes(OPPOSITE[arm]));
+  const grid = template === 'grid';
+  const neighbour = (node, arm) => {
+    if (grid) { const other = gridNeighbour(nodes, node, arm); return other?.arms.includes(OPPOSITE[arm]) ? other : null; }
+    return nodes.find(other => other !== node && Math.sign(other.x - node.x) === ARM_VECTORS[arm][0] && Math.sign(other.y - node.y) === ARM_VECTORS[arm][1] && other.arms.includes(OPPOSITE[arm]));
+  };
   for (const node of nodes) {
     for (const arm of node.arms) {
       const [vx, vy] = ARM_VECTORS[arm];
       const other = template === 'roundabout' ? null : neighbour(node, arm);
-      const sideRoad = !single && template !== 'roundabout' && (arm === 'north' || arm === 'south');
+      // Boundary roads are named after their junction when there is more than one
+      // (always in a grid, and for the corridor's side roads).
+      const sideRoad = grid || (!single && template !== 'roundabout' && (arm === 'north' || arm === 'south'));
       const name = sideRoad ? `${node.id} ${arm}` : ARM_LABELS[arm];
       const base = sideRoad ? `${node.id}-${arm}` : arm;
       if (other) {
@@ -144,8 +262,29 @@ export function compileNetwork(scenario) {
   const byId = Object.fromEntries(links.map(l => [l.id, l]));
   const nodeById = Object.fromEntries(nodes.map(n => [n.id, n]));
   const centre = { x: nodes.reduce((s, n) => s + n.x, 0) / nodes.length, y: nodes.reduce((s, n) => s + n.y, 0) / nodes.length };
-  return { template, nodes, links, byId, nodeById, centre, island: template === 'roundabout' ? { ...centre, radius: ROUNDABOUT_RADIUS - half - 1 } : null,
-    paths: new Map(), conflicts: new Map(), turning: Object.fromEntries(links.filter(l => l.to).map(l => [l.id, approachSettings(scenario, l.id, l.kind)])) };
+  const network = { template, nodes, links, byId, nodeById, centre, island: template === 'roundabout' ? { ...centre, radius: ROUNDABOUT_RADIUS - half - 1 } : null,
+    paths: new Map(), conflicts: new Map(), turning: Object.fromEntries(links.filter(l => l.to).map(l => [l.id, approachSettings(scenario, l.id, l.kind)])),
+    // Route draws per vehicle are fixed for a network so later vehicles' random
+    // streams stay aligned. Templates need at most two decisions; a grid route
+    // makes one per junction visited.
+    routeDraws: grid ? 2 * nodes.length + 2 : 2 };
+  network.exitDistance = exitDistances(network);
+  return network;
+}
+
+// Fewest junctions still to pass before leaving the network, from each link
+// (Infinity when no exit can be reached without a U-turn).
+function exitDistances(network) {
+  const distance = Object.fromEntries(network.links.map(l => [l.id, l.to ? Infinity : 0]));
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const link of network.links) {
+      if (!link.to) continue;
+      const best = 1 + Math.min(...movementsFrom(network, link.id).map(m => distance[m.link]));
+      if (best < distance[link.id]) { distance[link.id] = best; changed = true; }
+    }
+  }
+  return distance;
 }
 
 // Available departures from an inbound link, with the movement each represents.
@@ -197,14 +336,26 @@ export function chooseRoute(network, entryId, turning, draws) {
     }
     return { route, moves };
   }
+  // In a network with loops (a grid) a route never returns to a junction it has
+  // already passed. If every movement would, the vehicle takes the movement
+  // closest to an exit, so every route ends. Neither rule changes any choice on
+  // the fixed templates, which have no loops.
   let current = entryId;
-  for (let i = 0; network.byId[current].to; i++) {
-    const options = movementsFrom(network, current);
+  const visited = new Set([network.byId[entryId].to]);
+  for (let i = 0; network.byId[current].to && i < 64; i++) {
+    let options = movementsFrom(network, current);
+    const fresh = options.filter(o => !visited.has(network.byId[o.link].to));
+    if (fresh.length) options = fresh;
+    else {
+      const nearest = Math.min(...options.map(o => network.exitDistance[o.link]));
+      options = options.filter(o => network.exitDistance[o.link] === nearest);
+    }
     const shares = network.turning[current] ?? turning;
     const pick = pickWeighted(options, options.map(o => shareOf(shares, o.movement)), draws[i]);
     moves.push(pick.movement);
     route.push(pick.link);
     current = pick.link;
+    if (network.byId[current].to) visited.add(network.byId[current].to);
   }
   return { route, moves };
 }
@@ -324,6 +475,25 @@ export function analysePhase(network, node, ids) {
     if (a.movement === 'right' && b.movement !== 'right') permitted.add(a.id);
     else if (b.movement === 'right' && a.movement !== 'right') permitted.add(b.id);
     else if (a.movement !== 'right' || b.movement !== 'right') errors.push([a.id, b.id]);
+  }
+  return { errors, permitted: [...permitted] };
+}
+
+// Movements a shared phase plan can list: the union over every signalised
+// junction, in arm then left/straight/right order.
+export function planMovements(network) {
+  const seen = new Map();
+  for (const node of network.nodes.filter(n => n.control === 'signal')) for (const m of nodeMovements(network, node)) if (!seen.has(m.id)) seen.set(m.id, m);
+  return ARM_ORDER.flatMap(arm => ['left', 'straight', 'right'].map(movement => seen.get(`${arm}:${movement}`)).filter(Boolean));
+}
+
+// analysePhase across every signalised junction sharing the plan.
+export function analysePlanPhase(network, ids) {
+  const errors = [], permitted = new Set();
+  for (const node of network.nodes.filter(n => n.control === 'signal')) {
+    const result = analysePhase(network, node, ids);
+    for (const [a, b] of result.errors) errors.push([a, b, node]);
+    for (const id of result.permitted) permitted.add(id);
   }
   return { errors, permitted: [...permitted] };
 }
