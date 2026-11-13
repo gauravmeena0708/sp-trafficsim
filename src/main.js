@@ -1,4 +1,4 @@
-import { createProject, validateScenario, parseProject, DIRECTIONS, FLEET, APPROACH_FIELDS, PROFILE_PRESETS, profilePreset } from './model/project.js';
+import { createProject, validateScenario, parseProject, DIRECTIONS, FLEET, APPROACH_FIELDS, MAX_BOOKMARKS, PROFILE_PRESETS, profilePreset } from './model/project.js';
 import { lineChart } from './ui/charts.js';
 import { modelChecks } from './model/checks.js';
 import { changeSummary, changeText, scenarioChanges } from './model/changes.js';
@@ -8,11 +8,13 @@ import { ARM_ORDER, GRID, TEMPLATES, analysePlanPhase, approachSettings, compile
 import { DEMAND_LEVELS, PRECISION, sweepConfigurations, sweepGroupLabel, sweepTargets } from './simulation/experiments.js';
 import { explainApproach } from './diagnostics/explain.js';
 import { NetworkCanvas } from './ui/canvas.js';
+import { SPEED_LEGEND, SceneView, findVehicle } from './ui/scene3d.js';
 import { escapeHTML as esc, format, download, renderResults, renderTimeCharts, comparisonWarnings, resultsAreStale, csvReport, printMetadata } from './ui/reports.js';
 
 const $ = id => document.getElementById(id);
 const STORAGE_KEY = 'junction.project.v2';
 const LEGACY_STORAGE_KEY = 'junction.project.v1';
+const MAP_VIEW_KEY = 'junction.mapView';
 let project = createProject();
 try {
   const stored = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY);
@@ -236,16 +238,138 @@ function renderApproachButtons() {
   if (!links.some(l => l.id === selectedLink)) selectedLink = links[0].id;
   $('approach-buttons').innerHTML = links.map(l => `<button data-link="${esc(l.id)}" aria-pressed="${l.id === selectedLink}">${esc(l.label.replace(' approach', ''))}</button>`).join('');
   renderer.selected = selectedLink;
+  scene.renderer.selected = selectedLink;
 }
 
 function selectApproach(linkId) {
   selectedLink = linkId;
   renderer.selected = linkId;
+  scene.renderer.selected = linkId;
   document.querySelectorAll('[data-link]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.link === linkId)));
   refreshMetrics();
 }
 
 const renderer = new NetworkCanvas($('network-canvas'), selectApproach);
+
+// ---------------------------------------------------------------- 3D view
+// Both views draw the same Simulation object; neither view nor camera changes it.
+let mapView = '2d';
+const VEHICLE_NAMES = { twoWheeler: 'two-wheeler', auto: 'auto-rickshaw', car: 'car', bus: 'bus', truck: 'truck' };
+const scene = new SceneView($('scene-canvas'), {
+  select: id => selectApproach(id),
+  onCamera: () => refreshCompass(),
+  onVehicle: () => refreshVehicleStatus(),
+  onFollowEnd: message => { refreshVehicleStatus(); if (message) notice(message); },
+  onFailure: error => {
+    setMapView('2d');
+    $('view-3d').disabled = true;
+    notice(`The 3D view is unavailable (${error.message}). Showing the 2D plan; the run continues unchanged.`, 'error');
+  },
+});
+if (!scene.supported) { $('view-3d').disabled = true; $('view-3d').title = 'This browser cannot draw the 3D view.'; }
+
+function setMapView(view) {
+  mapView = view === '3d' && scene.supported && !scene.failed ? '3d' : '2d';
+  const three = mapView === '3d';
+  $('network-canvas').hidden = three;
+  $('scene-canvas').hidden = !three;
+  $('scene-controls').hidden = !three;
+  document.querySelector('.map-wrap').classList.toggle('three', three);
+  refreshSpeedLegend();
+  $('view-2d').setAttribute('aria-pressed', String(!three));
+  $('view-3d').setAttribute('aria-pressed', String(three));
+  $('map-note-title').textContent = three ? '3D view · true scale' : 'Schematic layout';
+  $('map-note-detail').textContent = three ? 'Same run as the 2D plan · 3.5 m lanes · not geographic' : 'Concept geometry · lane widths exaggerated for legibility';
+  if (three) scene.resize(); else scene.stopFollowing(false);
+  refreshCompass();
+  refreshVehicleStatus();
+  try { localStorage.setItem(MAP_VIEW_KEY, mapView); } catch { /* a remembered view is only a convenience */ }
+}
+
+function refreshCompass() {
+  $('compass-needle').style.transform = mapView === '3d' && scene.camera ? `rotate(${-scene.camera.yaw}rad)` : '';
+}
+
+function refreshVehicleStatus() {
+  const id = scene.renderer.selectedVehicle;
+  const found = id !== null && simulation ? findVehicle(simulation, id) : null;
+  if (id !== null && !found && !scene.following) scene.renderer.selectedVehicle = null;
+  $('vehicle-status').textContent = found
+    ? `Vehicle ${id}: ${VEHICLE_NAMES[found.v.type] ?? found.v.type} · ${Math.round(found.v.speed * 3.6)} km/h · ${found.where}`
+    : 'Select a vehicle on the 3D view to inspect or follow it.';
+  $('follow-button').disabled = !found && !scene.following;
+  $('follow-button').textContent = scene.following ? 'Stop following' : 'Follow vehicle';
+  $('follow-button').setAttribute('aria-pressed', String(Boolean(scene.following)));
+}
+
+function renderBookmarks(selected = '') {
+  const list = project.views.bookmarks;
+  $('bookmark-select').innerHTML = `<option value="">${list.length ? 'Go to a saved view…' : 'No saved views yet'}</option>` + list.map((b, i) => `<option value="${i}">${esc(b.name)}</option>`).join('');
+  $('bookmark-select').value = selected;
+  $('bookmark-delete').disabled = selected === '';
+}
+
+function refreshSpeedLegend() {
+  const on = scene.renderer.overlays.speed;
+  $('speed-legend').hidden = !on;
+  // Speed colours replace vehicle-type colours, so the type legend would mislead.
+  document.querySelector('.map-legend').hidden = on && mapView === '3d';
+  $('speed-legend').innerHTML = on ? `<span class="legend-title">Vehicle speed</span>${SPEED_LEGEND.map(b => `<span><i style="background:${b.colour}"></i> ${esc(b.label)}</span>`).join('')}` : '';
+}
+
+$('view-2d').addEventListener('click', () => setMapView('2d'));
+$('view-3d').addEventListener('click', () => setMapView('3d'));
+$('scene-controls').addEventListener('click', event => {
+  const preset = event.target.closest('[data-preset]')?.dataset.preset;
+  if (preset) { scene.preset(preset); return; }
+  const action = event.target.closest('[data-camera]')?.dataset.camera;
+  const turn = Math.PI / 24;
+  const actions = {
+    'orbit-left': () => scene.orbit(turn, 0), 'orbit-right': () => scene.orbit(-turn, 0),
+    'tilt-up': () => scene.orbit(0, -turn), 'tilt-down': () => scene.orbit(0, turn),
+    'zoom-in': () => scene.zoom(0.8), 'zoom-out': () => scene.zoom(1.25),
+    'pan-left': () => scene.pan(60, 0), 'pan-right': () => scene.pan(-60, 0), 'pan-up': () => scene.pan(0, 60), 'pan-down': () => scene.pan(0, -60),
+  };
+  actions[action]?.();
+});
+$('scene-controls').addEventListener('change', event => {
+  const overlay = event.target.dataset.overlay;
+  if (overlay) { scene.renderer.overlays[overlay] = event.target.checked; refreshSpeedLegend(); }
+});
+$('scene-detail').addEventListener('change', event => { scene.renderer.detail = event.target.value; });
+$('follow-button').addEventListener('click', () => {
+  if (scene.following) scene.stopFollowing(true, 'Stopped following. The camera has returned to the previous view.');
+  else if (scene.renderer.selectedVehicle !== null) {
+    scene.follow(scene.renderer.selectedVehicle);
+    notice(`Following vehicle ${scene.renderer.selectedVehicle}. Press Esc on the 3D view or Stop following to return.`);
+  }
+  refreshVehicleStatus();
+});
+$('bookmark-save').addEventListener('click', () => {
+  if (!scene.camera) return;
+  const list = project.views.bookmarks;
+  const name = $('bookmark-name').value.trim().slice(0, 40) || `View ${list.length + 1}`;
+  const existing = list.findIndex(b => b.name === name);
+  if (existing < 0 && list.length >= MAX_BOOKMARKS) { notice(`A project can hold ${MAX_BOOKMARKS} saved views. Delete one first.`, 'error'); return; }
+  const camera = { ...scene.camera, target: { ...scene.camera.target } };
+  if (existing >= 0) list[existing].camera = camera; else list.push({ name, camera });
+  persist();
+  renderBookmarks(String(existing >= 0 ? existing : list.length - 1));
+  $('bookmark-name').value = '';
+  notice(`Saved view "${name}". Views are saved with the project and do not affect inputs or results.`, 'success');
+});
+$('bookmark-select').addEventListener('change', event => {
+  const bookmark = project.views.bookmarks[Number(event.target.value)];
+  $('bookmark-delete').disabled = !bookmark;
+  if (bookmark && event.target.value !== '') scene.setCamera(bookmark.camera);
+});
+$('bookmark-delete').addEventListener('click', () => {
+  const index = Number($('bookmark-select').value);
+  const [removed] = project.views.bookmarks.splice(index, 1);
+  persist();
+  renderBookmarks();
+  if (removed) notice(`Deleted saved view "${removed.name}".`);
+});
 
 const clockText = seconds => `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
 let liveChartKey = '';
@@ -581,7 +705,7 @@ $('import-file').addEventListener('change', async event => {
     $('results-chart').hidden = true;
     $('time-charts').hidden = true;
     $('csv-button').disabled = true; $('report-button').disabled = true;
-    renderSettings(); resetSimulation(); refreshWarnings(); persist();
+    renderSettings(); resetSimulation(); refreshWarnings(); renderBookmarks(); persist();
     notice('Project opened. Imported results are not trusted; run scenarios again.', 'success');
   } catch (error) { notice(`Could not open project: ${error.message}`, 'error'); }
   event.target.value = '';
@@ -656,12 +780,14 @@ function frame(now) {
     while (accumulator >= STEP && !simulation.done) { simulation.step(); accumulator -= STEP; }
     if (simulation.done) { playing = false; notice('Run complete. Duplicate this scenario or compare its signal timings.', 'success'); }
   }
-  if (!$('design-panel').hidden && simulation) renderer.draw(simulation);
-  if (now - lastMetrics > 200) { refreshMetrics(); lastMetrics = now; }
+  if (!$('design-panel').hidden && simulation) (mapView === '3d' ? scene : renderer).draw(simulation);
+  if (now - lastMetrics > 200) { refreshMetrics(); if (mapView === '3d') refreshVehicleStatus(); lastMetrics = now; }
   requestAnimationFrame(frame);
 }
 
 renderSettings();
 resetSimulation();
 selectApproach(selectedLink);
+renderBookmarks();
+try { if (localStorage.getItem(MAP_VIEW_KEY) === '3d') setMapView('3d'); } catch { /* default to the 2D plan */ }
 requestAnimationFrame(frame);

@@ -2,13 +2,14 @@
 
 **Status: illustrative. No field calibration or independent validation has been performed.**
 
-Engine identifier: `illustrative-network/0.6.0`. Project schema version 6. Older projects are migrated on import:
+Engine identifier: `illustrative-network/0.6.0`. Project schema version 7. Older projects are migrated on import:
 
 - schema 1 becomes a straight-through four-arm junction;
 - schema 2 gains empty per-approach and per-junction settings;
 - schema 3 gains a constant demand profile;
 - schema 4 gains the two-phase signal plan type;
-- schema 5 gains an empty grid layout (`layout: null`).
+- schema 5 gains an empty grid layout (`layout: null`);
+- schema 6 gains an empty list of camera bookmarks (`views: { bookmarks: [] }`). Scenarios are unchanged.
 
 ## Network
 
@@ -145,6 +146,45 @@ Physics uses 0.2-second steps; playback speed changes wall-clock execution only.
 - Completed-trip mean and p95 journey times use vehicles requested after warm-up and completed by the horizon. They include entry waiting and are biased towards completed trips; read them with completion and unfinished counts.
 - **Accrued delay** integrates `max(0, 1 − speed / desiredSpeed)` over time for post-warm-up requests, including waiting outside and time in junctions, divided by those requests (including unfinished trips). Person delay weights by disclosed fixed class occupancies. It is delay accrued to the run horizon, not eventual total trip delay.
 - **Boundary accounting** covers the whole run: `requested = completed + inNetwork + waitingOutside`, and `admitted = completed + inNetwork`. Both are checked at every step in tests.
+
+## Views: 2D plan and 3D
+
+The 2D plan and the 3D view draw the same `Simulation` object, and neither of them writes to it. Switching views, moving the camera, following a vehicle, changing overlays and saving camera bookmarks do not restart the run or change any input or result. They do not mark experiment results as stale either. Tests confirm this:
+
+- a seeded run drawn in 3D from changing camera positions gives the same results as an undrawn run, for every template;
+- in the browser, a run that switches views and moves the camera mid-run ends with the same metrics as one that does not.
+
+- **Coordinates.** The 3D view uses the network's own coordinates:
+  - metres, with x pointing east and y pointing south, as on the plan;
+  - z pointing up from a flat road surface;
+  - the origin at the first junction's centre (for the roundabout, the centre of the ring).
+
+  Unlike the plan, the 3D view draws lanes (3.5 m) and roads at one true scale. A ground grid of 50 m squares, plus the camera's distance and height, give a sense of scale.
+- **What is drawn.**
+  - Road surfaces, lane markings, the median line, junction boxes and the roundabout island.
+  - Stop lines and give-way lines.
+  - A signal pole on every signalised approach. Its lamps show that arm's state, exactly as the 2D signal marker does; red and green lit together means "partial" (some movements green).
+  - Vehicles as boxes with each type's simulated length and an illustrative breadth and height: two-wheeler 0.8 × 1.4 m, auto-rickshaw 1.4 × 1.7 m, car 1.8 × 1.5 m, bus 2.5 × 3.1 m, truck 2.5 × 3.3 m. Breadth and height are visual only; the engine does not model width.
+  - The view has no terrain, elevation, buildings or scenery. Roads that cross visually are not connected; this matches the network rules.
+- **Overlays.**
+  - Labels: approach and junction names, at a fixed pixel size so they stay legible at any zoom.
+  - Queues: an amber strip beside the lane, using the same queue definition as the metrics, labelled when 30 m or longer.
+  - Signal state at stop lines.
+  - Vehicle speed in three classes, each with a text legend: stopped (below 2 m/s), slow (below half the vehicle's desired speed), and moving.
+- **Camera.**
+  - Orbit, tilt, pan and zoom by mouse, touch (pinch and two-finger pan), keyboard and on-screen buttons.
+  - Presets: fit study area, angled overview, overhead, street level (about 2 m up on the selected approach, looking at the stop line), and reset.
+  - Bounds: tilt 3°–89.5° above the horizon, eye at least 1.6 m above the road, and distance 8 m to the larger of 300 m and four times the study radius. The target stays within one study radius (at least 100 m) of the network.
+  - A north indicator turns with the camera. Networks with more than one junction also get an overview map showing the camera's ground footprint.
+- **Selection.**
+  - Selecting a road opens the same approach inspector as the plan.
+  - Selecting a vehicle shows its type, speed and location. The camera can follow it, moving in to within 70 m. When the vehicle leaves the network, or following is stopped, the camera returns to the previous view and says so.
+- **Bookmarks.** Named camera views (up to 20) are saved with the project, separately from scenario inputs.
+- **Fallback.** If the 3D view cannot draw (no 2D canvas context, a lost context, or a drawing error), the workbench switches to the 2D plan, disables the 3D button and explains why. The run continues unaffected.
+- **Not yet in 3D.**
+  - Demand and congestion-event overlays.
+  - Selecting junctions or queues as objects.
+  - Depth-correct drawing where vehicles overlap: the renderer paints objects far to near, so tightly packed bodies can occasionally overlap incorrectly.
 
 ## Explanations and limits
 

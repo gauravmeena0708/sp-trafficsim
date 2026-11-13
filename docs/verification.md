@@ -1,5 +1,21 @@
 # Verification record
 
+## Navigable 3D view — 12 November 2026
+
+- The engine is unchanged (`illustrative-network/0.6.0`). Schema 7 adds project-level camera bookmarks only.
+- `npm test`: 60 passed (6 new in `test/scene3d.test.js`):
+  - projection: the target is at the screen centre, north is up when overhead, east is right, and turning to face east puts north on the left; sight lines meet the ground at the target; points behind the camera are not drawn;
+  - camera bounds keep the eye above 1.6 m, tilt and distance in range, the target near the study area, and non-finite input safe;
+  - the fit, overview, overhead and reset presets keep every road end on screen for every template, and street level stands about 2 m up, looking at the stop line;
+  - drawing the 3D view throughout a seeded run gives results identical to an undrawn run, for every template, while switching presets, orbiting, panning, zooming and changing detail;
+  - picking returns the road under the pointer, or the vehicle closest to the pointer, and nothing above the horizon;
+  - bookmarks round-trip through the project file, invalid entries are dropped, names are trimmed and limited to 40 characters, at most 20 are kept, and schema 6 projects migrate with no bookmarks.
+- `npm run test:browser`: 18 passed in Chrome 157. The three new checks:
+  - a 180 s run at 32× gives identical metrics with and without switching to 3D mid-run, dragging to orbit, wheel zoom, the four presets, the on-screen buttons, Shift+arrow, arrow and + keys, and switching back and forth;
+  - clicking a road in 3D opens the same approach inspector, and clicking a vehicle selects it. Follow presses the button, Esc stops following and says so, a saved view is stored with the project and restores its camera, deleting removes it, and the speed overlay shows a text legend;
+  - frame time: 2 × 2 grid at 300 s (203 vehicles), 1200 × 700 canvas, software rendering. Full detail has a median of about 3 ms (90th percentile under 5 ms) across runs; reduced detail has a median of 1.0 ms; the budget is 50 ms. Dispatching `contextlost` switches to the 2D plan, disables the 3D button and explains why.
+- The site has no new assets: the 3D view is one ES module, served by relative path and checked by `npm run check`.
+
 ## Grid network editor — 12 November 2026
 
 - Existing templates are unchanged: full results for the four-arm, T-junction, corridor and roundabout templates (plain, with turning, and with a protected-right-turn custom plan; 11 cases) hash identically before and after the change.

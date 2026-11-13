@@ -3,7 +3,7 @@ import { TEMPLATES, analysePhase, approachSettings, compileNetwork, configurable
 const MOVEMENT_ID = /^(north|east|south|west):(left|straight|right)$/;
 
 export const ENGINE_VERSION = 'illustrative-network/0.6.0';
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 // Demand over time: each entry's base veh/h is multiplied by the factor for the
 // current period. Presets are written out as explicit factors so a saved
@@ -163,12 +163,13 @@ function phasePlanErrors(network, phases) {
 }
 
 export function createProject() {
-  return { schemaVersion: SCHEMA_VERSION, title: 'Junction study', scenarios: [createScenario()], results: [] };
+  return { schemaVersion: SCHEMA_VERSION, title: 'Junction study', scenarios: [createScenario()], views: { bookmarks: [] }, results: [] };
 }
 
 // Schema 1 described a single straight-through four-arm junction; schema 2 added
 // templates and shared turning shares; schema 3 adds per-approach and per-junction settings;
-// 4 demand profiles; 5 custom phase plans; 6 the grid layout.
+// 4 demand profiles; 5 custom phase plans; 6 the grid layout. Schema 7 adds project-level
+// camera bookmarks (views) and leaves scenarios unchanged.
 export function migrateScenario(s, fromVersion) {
   if (fromVersion >= SCHEMA_VERSION || !s || typeof s !== 'object') return s;
   let next = s;
@@ -183,7 +184,7 @@ export function migrateScenario(s, fromVersion) {
 export function parseProject(text) {
   if (text.length > 5_000_000) throw new Error('Project is larger than the 5 MB import limit.');
   const project = JSON.parse(text);
-  if (![1, 2, 3, 4, 5, SCHEMA_VERSION].includes(project?.schemaVersion)) throw new Error('Unsupported project version.');
+  if (![1, 2, 3, 4, 5, 6, SCHEMA_VERSION].includes(project?.schemaVersion)) throw new Error('Unsupported project version.');
   if (Array.isArray(project.scenarios)) project.scenarios = project.scenarios.map(s => migrateScenario(s, project.schemaVersion));
   if (!Array.isArray(project.scenarios) || project.scenarios.length < 1 || project.scenarios.length > 30) throw new Error('A project must contain 1–30 scenarios.');
   const ids = new Set();
@@ -194,5 +195,14 @@ export function parseProject(text) {
     ids.add(s.id);
   }
   // Imported reports are not trusted as engine outputs. Re-run scenarios to compare.
-  return { schemaVersion: SCHEMA_VERSION, title: 'Junction study', scenarios: project.scenarios, results: [] };
+  return { schemaVersion: SCHEMA_VERSION, title: 'Junction study', scenarios: project.scenarios, views: sanitizeViews(project.views), results: [] };
+}
+
+// Camera bookmarks are presentation settings: saved with a project, never simulation inputs.
+export const MAX_BOOKMARKS = 20;
+export function sanitizeViews(views) {
+  const finite = n => typeof n === 'number' && Number.isFinite(n);
+  const valid = b => b && typeof b.name === 'string' && b.name.trim() && b.camera && ['yaw', 'pitch', 'distance'].every(k => finite(b.camera[k])) && finite(b.camera.target?.x) && finite(b.camera.target?.y);
+  const list = Array.isArray(views?.bookmarks) ? views.bookmarks.filter(valid) : [];
+  return { bookmarks: list.slice(0, MAX_BOOKMARKS).map(b => ({ name: b.name.trim().slice(0, 40), camera: { target: { x: b.camera.target.x, y: b.camera.target.y }, yaw: b.camera.yaw, pitch: b.camera.pitch, distance: b.camera.distance } })) };
 }

@@ -404,6 +404,133 @@ await check('demand profile editor, live queue chart and persistent-queue list',
   await screenshot('profile-editor');
 });
 
+// Screen position of a world point in the 3D view, computed with the page's own modules
+// for the overhead preset (deterministic for a given network and canvas size).
+const sceneHelpers = `
+  const scene = await import('./src/ui/scene3d.js');
+  const network = await import('./src/model/network.js');
+  const { createScenario } = await import('./src/model/project.js');
+  const rect = document.getElementById('scene-canvas').getBoundingClientRect();
+  const compiled = network.compileNetwork(createScenario());
+  const bounds = scene.networkBounds(compiled);
+  const basis = scene.viewBasis(scene.presetCamera('overhead', compiled, bounds, null, rect.width / rect.height), rect.width, rect.height);
+  const screen = (link, lane, s) => { const p = scene.projectPoint(basis, ...network.lanePoint(compiled.byId[link], lane, s), 0); return { x: rect.left + p.x, y: rect.top + p.y }; };
+`;
+const mouse = async (type, x, y, extra = {}) => page.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1, ...extra });
+const click = async (x, y) => { await mouse('mousePressed', x, y); await mouse('mouseReleased', x, y); };
+const metrics = () => evaluate(`['metric-completed', 'metric-requested', 'metric-network', 'metric-waiting', 'metric-queue'].map(id => document.getElementById(id).textContent).join(' | ')`);
+
+await check('3D view: switching views and moving the camera leave the run unchanged', async () => {
+  await load();
+  const setInput = (selector, value) => evaluate(`(() => { const el = document.querySelector('${selector}'); el.value = '${value}'; el.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await setInput('[data-path="run.warmup"]', '0');
+  await setInput('[data-path="run.duration"]', '180');
+  await evaluate(`document.getElementById('speed-select').value = '32'; document.getElementById('play-button').click()`);
+  await waitFor(`document.getElementById('run-state').textContent === 'Complete'`, 'reference run completes', 30000);
+  const reference = await metrics();
+  await evaluate(`document.getElementById('reset-button').click(); document.getElementById('play-button').click()`);
+  await waitFor(`parseInt(document.getElementById('simulation-time').textContent.split(':')[1]) >= 20 || document.getElementById('simulation-time').textContent.startsWith('01')`, 'run under way');
+  await evaluate(`document.getElementById('view-3d').click()`);
+  assert(await evaluate(`!document.getElementById('scene-canvas').hidden && document.getElementById('network-canvas').hidden && !document.getElementById('scene-controls').hidden`), '3D canvas and controls should show');
+  assert(await evaluate(`document.getElementById('map-note-title').textContent.startsWith('3D view')`), 'map note should describe the 3D view');
+  const box = await evaluate(`(() => { const r = document.getElementById('scene-canvas').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+  await mouse('mousePressed', box.x, box.y);
+  for (let i = 1; i <= 6; i++) await mouse('mouseMoved', box.x + i * 20, box.y + i * 6);
+  await mouse('mouseReleased', box.x + 120, box.y + 36);
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: box.x, y: box.y, deltaX: 0, deltaY: -240 });
+  assert(await evaluate(`document.getElementById('compass-needle').style.transform.includes('rotate')`), 'the north indicator should turn with the camera');
+  for (const preset of ['street', 'overhead', 'overview', 'fit']) await evaluate(`document.querySelector('[data-preset="${preset}"]').click()`);
+  await evaluate(`document.querySelector('[data-camera="orbit-left"]').click(); document.querySelector('[data-camera="zoom-in"]').click(); document.getElementById('scene-canvas').focus()`);
+  await key('ArrowLeft', 'ArrowLeft', 37, 8);
+  await key('ArrowUp', 'ArrowUp', 38);
+  await key('+', 'Equal', 187);
+  await evaluate(`document.getElementById('view-2d').click()`);
+  await wait(300);
+  await evaluate(`document.getElementById('view-3d').click()`);
+  await screenshot('scene-3d-overview');
+  await waitFor(`document.getElementById('run-state').textContent === 'Complete'`, 'viewed run completes', 30000);
+  const viewed = await metrics();
+  assert(viewed === reference, `results differ after view changes: ${viewed} vs ${reference}`);
+  assert(!pageErrors.length, pageErrors.join('; '));
+});
+
+await check('3D view: select roads and vehicles, follow a vehicle, and save camera bookmarks', async () => {
+  // Before the run starts the roads are empty, so a click can only find the road.
+  await evaluate(`document.getElementById('reset-button').click(); document.getElementById('scene-canvas').scrollIntoView({ block: 'center' }); document.querySelector('[data-preset="overhead"]').click()`);
+  await wait(200);
+  const road = await evaluate(`(async () => { ${sceneHelpers} return screen('north', 0, compiled.byId.north.length * 0.25); })()`);
+  await click(road.x, road.y);
+  await waitFor(`document.getElementById('approach-title').textContent === 'North approach'`, `clicking a road in 3D opens the same inspector (clicked ${Math.round(road.x)}, ${Math.round(road.y)})`);
+  await evaluate(`document.getElementById('play-button').click()`);
+  await waitFor(`document.getElementById('simulation-time').textContent.startsWith('01')`, 'run reaches one minute', 30000);
+  await evaluate(`document.getElementById('play-button').click(); document.querySelector('[data-preset="overhead"]').click()`);
+  await wait(200);
+  // Queued vehicles wait near the stop lines; click along the lanes until one is selected.
+  const points = await evaluate(`(async () => { ${sceneHelpers} const out = []; for (const id of ['west', 'east', 'north', 'south']) for (let lane = 0; lane < compiled.byId[id].lanes; lane++) for (let s = 2; s < 80; s += 2) out.push(screen(id, lane, compiled.byId[id].length - s)); return out; })()`);
+  let selected = false;
+  for (const p of points) {
+    await click(p.x, p.y);
+    if (await evaluate(`document.getElementById('vehicle-status').textContent.startsWith('Vehicle')`)) { selected = true; break; }
+  }
+  assert(selected, 'clicking a vehicle should select it');
+  assert(await evaluate(`!document.getElementById('follow-button').disabled`), 'a selected vehicle can be followed');
+  await evaluate(`document.getElementById('follow-button').click()`);
+  assert(await evaluate(`document.getElementById('follow-button').getAttribute('aria-pressed') === 'true'`), 'follow button should be pressed');
+  await evaluate(`document.getElementById('play-button').click()`);
+  await wait(800);
+  await screenshot('scene-3d-follow');
+  await evaluate(`document.getElementById('scene-canvas').focus()`);
+  await key('Escape', 'Escape', 27);
+  assert(await evaluate(`document.getElementById('follow-button').getAttribute('aria-pressed') === 'false' && /returned to the previous view/.test(document.getElementById('notice').textContent)`), 'Esc stops following and says so');
+  await evaluate(`document.getElementById('play-button').click()`);
+  // Bookmarks: saved with the project, separately from scenario inputs.
+  await evaluate(`document.querySelector('[data-preset="street"]').click(); document.getElementById('bookmark-name').value = 'North stop line'; document.getElementById('bookmark-save').click()`);
+  assert(await evaluate(`[...document.getElementById('bookmark-select').options].some(o => o.textContent === 'North stop line')`), 'saved view should be listed');
+  const stored = await evaluate(`JSON.parse(localStorage.getItem('junction.project.v2')).views.bookmarks.map(b => b.name).join(',')`);
+  assert(stored === 'North stop line', `bookmark should be stored with the project, got "${stored}"`);
+  const before = await evaluate(`document.getElementById('compass-needle').style.transform`);
+  await evaluate(`document.querySelector('[data-preset="overview"]').click()`);
+  await evaluate(`(() => { const el = document.getElementById('bookmark-select'); el.value = '0'; el.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  assert(await evaluate(`document.getElementById('compass-needle').style.transform`) === before, 'going to a bookmark restores its camera');
+  assert(await evaluate(`document.getElementById('run-state').textContent`) !== 'Invalid inputs', 'bookmarks do not touch inputs');
+  await evaluate(`document.getElementById('bookmark-delete').click()`);
+  assert(await evaluate(`JSON.parse(localStorage.getItem('junction.project.v2')).views.bookmarks.length === 0`), 'deleting a bookmark removes it from the project');
+  await evaluate(`document.querySelector('[data-overlay="speed"]').click()`);
+  assert(await evaluate(`!document.getElementById('speed-legend').hidden && document.getElementById('speed-legend').textContent.includes('Stopped')`), 'speed colours come with a text legend');
+  await screenshot('scene-3d-street');
+  await evaluate(`document.getElementById('scene-controls').scrollIntoView({ block: 'center' })`);
+  await screenshot('scene-3d-controls');
+  assert(!pageErrors.length, pageErrors.join('; '));
+});
+
+await check('3D view: frame time on the declared grid workload, and a 2D fallback when drawing fails', async () => {
+  const timing = await evaluate(`(async () => {
+    const { SceneRenderer } = await import('./src/ui/scene3d.js');
+    const { createScenario } = await import('./src/model/project.js');
+    const { defaultLayout } = await import('./src/model/network.js');
+    const { Simulation } = await import('./src/simulation/engine.js');
+    const s = createScenario(); s.template = 'grid'; s.layout = defaultLayout(); s.run.duration = 300; s.turning = { left: 20, right: 20 };
+    const simulation = new Simulation(s);
+    while (simulation.time < 300 && !simulation.done) simulation.step();
+    const canvas = document.createElement('canvas'); canvas.width = 1200; canvas.height = 700;
+    const renderer = new SceneRenderer(canvas.getContext('2d')); renderer.setSize(1200, 700); renderer.useNetwork(simulation.network);
+    const out = {};
+    for (const detail of ['full', 'reduced']) {
+      renderer.detail = detail;
+      const times = [];
+      for (let i = 0; i < 40; i++) { renderer.applyPreset(i % 2 ? 'overview' : 'street'); const t = performance.now(); renderer.draw(simulation); times.push(performance.now() - t); }
+      times.sort((a, b) => a - b);
+      out[detail] = { median: times[20], p90: times[36], vehicles: renderer.stats.vehicles };
+    }
+    return out;
+  })()`);
+  console.log(`      3D frame (1200×700, 2×2 grid at 300 s, ${timing.full.vehicles} vehicles): full median ${timing.full.median.toFixed(1)} ms, p90 ${timing.full.p90.toFixed(1)} ms; reduced median ${timing.reduced.median.toFixed(1)} ms`);
+  assert(timing.full.median < 50, `3D frame median ${timing.full.median.toFixed(1)} ms exceeds the 50 ms budget`);
+  await evaluate(`document.getElementById('scene-canvas').dispatchEvent(new Event('contextlost'))`);
+  assert(await evaluate(`document.getElementById('scene-canvas').hidden && !document.getElementById('network-canvas').hidden && document.getElementById('view-3d').disabled`), 'losing the graphics context should fall back to the 2D plan');
+  assert(/3D view is unavailable/.test(await evaluate(`document.getElementById('notice').textContent`)), 'the fallback should be explained');
+});
+
 await check('phone-sized touch layout has no horizontal scrolling and taps select approaches', async () => {
   await load();
   await setViewport(390, 844, true);

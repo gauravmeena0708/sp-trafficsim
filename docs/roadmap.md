@@ -63,10 +63,10 @@ The full Phase 1 in the product plan is large. Deliver it in this order, so each
 
 Build on the network graph so the renderer is not tied to one junction shape (spec §14 and §16).
 
-- [ ] Shared simulation state for 2D and 3D views, with no change to numerical results.
-- [ ] Zoom, orbit, tilt, pan, fit/reset presets; accessible mouse, touch and keyboard controls.
-- [ ] Selectable objects, legible overlays, camera bookmarks, optional vehicle following, 2D fallback.
-- [ ] Renderer/dependency evaluation, Pages asset checks, and browser performance verification.
+- [x] Shared simulation state for 2D and 3D views, with no change to numerical results (tested for every template and in the browser).
+- [x] Zoom, orbit, tilt, pan, fit/reset presets (plus overview, overhead and street level); accessible mouse, touch, keyboard and on-screen controls.
+- [x] Selectable roads and vehicles, legible overlays (labels, queues, signal states, speed classes), camera bookmarks saved with the project, optional vehicle following, 2D fallback. Demand and congestion-event overlays, and selecting junctions or queues as objects, are not yet in 3D.
+- [x] Renderer/dependency evaluation (architecture decision 003: dependency-free Canvas 2D projection), no new assets, and a browser frame-time check on the grid workload.
 
 ### Deferred within Phase 1
 
